@@ -20,6 +20,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Optional.h"
 
 namespace clang {
 
@@ -35,6 +36,22 @@ namespace clang {
   class NestedNameSpecifier;
   class Stmt;
   class TypeSourceInfo;
+
+  /// \brief Kind of error when importing a declaration.
+  /// The term 'inherited' is used to indicate that the current object could
+  /// not be imported because import of a (direct) dependency has failed.
+  /// The real source of the error in this case is not the current object,
+  /// instead one of its dependencies.
+  enum class ImportErrorKind {
+      NameConflict, /// Naming ambiguity (likely ODR violation).
+      UnsupportedConstruct, /// Not supported node or case.
+      InheritedDecl, /// A needed declaration could not be imported.
+      InheritedType, /// A needed type or type info could not be imported.
+      InheritedExpr, /// A needed expression could not be imported.
+      InheritedStmt, /// A needed statement could not be imported.
+      InheritedName, /// Declaration name or identifier could not be imported.
+      InheritedLocation /// Source location could not be imported.
+  };
 
   // \brief Returns with a list of declarations started from the canonical decl
   // then followed by subsequent decls in the translation unit.
@@ -74,6 +91,13 @@ namespace clang {
     /// context to the corresponding declarations in the "to" context.
     llvm::DenseMap<Decl *, Decl *> ImportedDecls;
 
+    /// \brief Mapping from the already-imported declarations in the "from"
+    /// context to the error status of the import of that declaration.
+    /// This map contains only the declarations that were not correctly
+    /// imported. The same declaration may or may not be included in
+    /// ImportedDecls.
+    llvm::DenseMap<Decl *, ImportErrorKind> ImportDeclErrors;
+
     /// \brief Mapping from the already-imported statements in the "from"
     /// context to the corresponding statements in the "to" context.
     llvm::DenseMap<Stmt *, Stmt *> ImportedStmts;
@@ -94,6 +118,10 @@ namespace clang {
     /// This flag signs if the Importer encountered an unsupported construct
     /// during the last import process.
     bool EncounteredUnsupportedConstruct;
+
+    /// This flag signs if the Importer encountered an ODR problem
+    /// during the last import process.
+    bool EncounteredODRError;
 
   public:
     /// \brief Create a new AST importer.
@@ -145,6 +173,10 @@ namespace clang {
     /// it has already been imported from the "from" context.  Otherwise return
     /// NULL.
     Decl *GetAlreadyImportedOrNull(Decl *FromD);
+
+    /// \brief Return if import of the given declaration has failed and if yes
+    /// the kind of the problem.
+    llvm::Optional<ImportErrorKind> getImportDeclErrorIfAny(Decl *FromD) const;
 
     /// \brief Return the declaration of the built-in type "__va_list_tag" from
     /// the ASTContext instead of importing it.
@@ -253,9 +285,11 @@ namespace clang {
     ///
     /// This routine is invoked whenever there is a name conflict while 
     /// importing a declaration. The returned name will become the name of the
-    /// imported declaration. By default, the returned name is the same as the
-    /// original name, leaving the conflict unresolve such that name lookup
-    /// for this name is likely to find an ambiguity later.
+    /// imported declaration. By default, the returned name is an empty name.
+    /// If the original name is returned the conflict remains unresolved such
+    /// that name lookup for this name is likely to find an ambiguity later.
+    /// This can cause various assertions or problems later
+    /// and should be avoided.
     ///
     /// Subclasses may override this routine to resolve the conflict, e.g., by
     /// renaming the declaration being imported.
@@ -274,6 +308,7 @@ namespace clang {
     /// \param NumDecls the number of conflicting declarations in \p Decls.
     ///
     /// \returns the name that the newly-imported declaration should have.
+    /// If empty the current import is forced to fail with name conflict error.
     virtual DeclarationName HandleNameConflict(DeclarationName Name,
                                                DeclContext *DC,
                                                unsigned IDNS,
@@ -314,6 +349,10 @@ namespace clang {
     /// Store and assign the imported declaration to its counterpart.
     Decl *MapImported(Decl *From, Decl *To);
 
+    /// Mark imported declaration with error.
+    /// Returns \c nullptr
+    Decl *setImportDeclError(Decl *From, ImportErrorKind Error);
+
     /// \brief Called by StructuralEquivalenceContext.  If a RecordDecl is
     /// being compared to another RecordDecl as part of import, completing the
     /// other RecordDecl may trigger importation of the first RecordDecl. This
@@ -327,13 +366,11 @@ namespace clang {
     bool IsStructurallyEquivalent(QualType From, QualType To,
                                   bool Complain = true);
 
-    void setEncounteredUnsupportedConstruct(bool B) {
-      EncounteredUnsupportedConstruct = B;
-    }
+    llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
 
-    bool hasEncounteredUnsupportedConstruct() const {
-      return EncounteredUnsupportedConstruct;
-    }
+    unsigned int getImportErrorCount(ImportErrorKind Error) const;
+    bool hasImportErrorCount() const;
+    void resetImportErrorCount();
   };
 }
 

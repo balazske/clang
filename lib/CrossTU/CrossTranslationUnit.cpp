@@ -73,6 +73,8 @@ STATISTIC(NumGetCTUSuccess, "The # of getCTUDefinition successfully return the "
                             "requested function's body");
 STATISTIC(NumUnsupportedNodeFound, "The # of imports when the ASTImporter "
                                    "encountered an unsupported AST Node");
+STATISTIC(NumODRErrorFound, "The # of imports when the ASTImporter "
+                            "encountered some kind of ODR violation");
 STATISTIC(NumTripleMismatch, "The # of triple mismatches");
 STATISTIC(NumLangMismatch, "The # of language mismatches");
 
@@ -334,13 +336,18 @@ CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD) {
   assert(FD->hasBody() && "Functions to be imported should have body.");
 
   ASTImporter &Importer = getOrCreateASTImporter(FD->getASTContext());
+  Importer.resetImportErrorCount();
   auto *ToDecl = cast_or_null<FunctionDecl>(
       Importer.Import(const_cast<FunctionDecl *>(FD)));
-  if (Importer.hasEncounteredUnsupportedConstruct()) {
+  if (Importer.hasImportErrorCount()) {
     if (ToDecl)
       InvalidFunctions.insert(ToDecl);
-    Importer.setEncounteredUnsupportedConstruct(false);
-    NumUnsupportedNodeFound++;
+    if (unsigned int Count = Importer.getImportErrorCount(
+        ImportErrorKind::UnsupportedConstruct))
+      NumUnsupportedNodeFound += Count;
+    if (unsigned int Count = Importer.getImportErrorCount(
+        ImportErrorKind::NameConflict))
+      NumODRErrorFound += Count;
     return nullptr;
   }
 

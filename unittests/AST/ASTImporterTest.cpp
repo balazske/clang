@@ -3517,6 +3517,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
         FromTU, cxxRecordDecl(hasName("A")));
     ToR1 = Import(FromR, Lang_CXX);
   }
+  ASSERT_TRUE(ToR1);
   Decl *ToR2;
   {
     Decl *FromTU = getTuDecl(
@@ -3525,7 +3526,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
         FromTU, cxxRecordDecl(hasName("A")));
     ToR2 = Import(FromR, Lang_CXX);
   }
-  EXPECT_NE(ToR1, ToR2);
+  EXPECT_FALSE(ToR2);
 }
 
 TEST_P(ASTImporterTestBase, ImportOfEquivalentField) {
@@ -3557,6 +3558,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
         FromTU, fieldDecl(hasName("x")));
     ToF1 = Import(FromF, Lang_CXX);
   }
+  ASSERT_TRUE(ToF1);
   Decl *ToF2;
   {
     Decl *FromTU = getTuDecl(
@@ -3565,7 +3567,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
         FromTU, fieldDecl(hasName("x")));
     ToF2 = Import(FromF, Lang_CXX);
   }
-  EXPECT_NE(ToF1, ToF2);
+  EXPECT_FALSE(ToF2);
 }
 
 TEST_P(ASTImporterTestBase, ImportOfEquivalentMethod) {
@@ -3598,6 +3600,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentMethod) {
         FromTU, functionDecl(hasName("x"), isDefinition()));
     ToM1 = Import(FromM, Lang_CXX);
   }
+  ASSERT_TRUE(ToM1);
   Decl *ToM2;
   {
     Decl *FromTU = getTuDecl(
@@ -3840,6 +3843,177 @@ TEST_P(DeclContextTest, removeDeclOfClassTemplateSpecialization) {
   EXPECT_FALSE(NS->containsDecl(Spec));
 }
 
+class CheckODRAtImport : public ASTImporterTestBase { };
+
+TEST_P(CheckODRAtImport, Class) {
+  getToTuDecl(
+      R"(
+      class X {
+        int f;
+      };
+      )", Lang_CXX);
+  Decl *FromTU = getTuDecl(
+      R"(
+      class X {
+        char f;
+      };
+      )", Lang_CXX);
+  auto *FromClass = FirstDeclMatcher<CXXRecordDecl>().match(
+      FromTU, cxxRecordDecl(hasName("X")));
+  auto *ToClass = Import(FromClass, Lang_CXX);
+  EXPECT_EQ(ToClass, nullptr);
+}
+
+TEST_P(CheckODRAtImport, DISABLED_Function) {
+  getToTuDecl(
+      R"(
+      void f();
+      )", Lang_CXX);
+  Decl *FromTU = getTuDecl(
+      R"(
+      int f();
+      )", Lang_CXX);
+  auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
+      FromTU, functionDecl(hasName("f")));
+  auto *ToFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_EQ(ToFunc, nullptr);
+}
+
+TEST_P(CheckODRAtImport, FunctionOverload) {
+  getToTuDecl(
+      R"(
+      void f();
+      )", Lang_CXX);
+  Decl *FromTU = getTuDecl(
+      R"(
+      void f(int);
+      )", Lang_CXX);
+  auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
+      FromTU, functionDecl(hasName("f")));
+  auto *ToFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_TRUE(ToFunc);
+}
+
+TEST_P(CheckODRAtImport, ClassTemplate) {
+  getToTuDecl(
+      R"(
+      template <int> class X { };
+      )", Lang_CXX11);
+  Decl *FromTU = getTuDecl(
+      R"(
+      template <char> class X { };
+      )", Lang_CXX11);
+  auto *FromClass = FirstDeclMatcher<ClassTemplateDecl>().match(
+      FromTU, classTemplateDecl(hasName("X")));
+  auto *ToClass = Import(FromClass, Lang_CXX);
+  EXPECT_EQ(ToClass, nullptr);
+}
+
+TEST_P(CheckODRAtImport, FunctionTemplate) {
+  getToTuDecl(
+      R"(
+      template <int> void f();
+      )", Lang_CXX11);
+  Decl *FromTU = getTuDecl(
+      R"(
+      template <char> void f();
+      )", Lang_CXX11);
+  auto *FromFunc = FirstDeclMatcher<FunctionTemplateDecl>().match(
+      FromTU, functionTemplateDecl(hasName("f")));
+  auto *ToFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_TRUE(ToFunc);
+}
+
+TEST_P(CheckODRAtImport, VariableAndFunction) {
+  getToTuDecl(
+      R"(
+      int X;
+      )", Lang_CXX11);
+  Decl *FromTU = getTuDecl(
+      R"(
+      void X();
+      )", Lang_CXX11);
+  auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
+      FromTU, functionDecl(hasName("X")));
+  auto *ToFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_EQ(ToFunc, nullptr);
+}
+
+TEST_P(CheckODRAtImport, FunctionAndVariable) {
+  getToTuDecl(
+      R"(
+      void X();
+      )", Lang_C);
+  Decl *FromTU = getTuDecl(
+      R"(
+      int X;
+      )", Lang_C);
+  auto *FromVar = FirstDeclMatcher<VarDecl>().match(
+      FromTU, varDecl(hasName("X")));
+  auto *ToVar = Import(FromVar, Lang_C);
+  EXPECT_EQ(ToVar, nullptr);
+}
+
+TEST_P(CheckODRAtImport, RecordAndFunction) {
+  getToTuDecl(
+      R"(
+      struct X;
+      )", Lang_CXX11);
+  Decl *FromTU = getTuDecl(
+      R"(
+      void X();
+      )", Lang_CXX11);
+  auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
+      FromTU, functionDecl(hasName("X")));
+  auto *ToFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_TRUE(ToFunc);
+}
+
+TEST_P(CheckODRAtImport, FunctionAndRecord) {
+  getToTuDecl(
+      R"(
+      void X();
+      )", Lang_C);
+  Decl *FromTU = getTuDecl(
+      R"(
+      struct X;
+      )", Lang_C);
+  auto *FromRecord = FirstDeclMatcher<RecordDecl>().match(
+      FromTU, recordDecl(hasName("X")));
+  auto *ToRecord = Import(FromRecord, Lang_C);
+  EXPECT_TRUE(ToRecord);
+}
+
+TEST_P(CheckODRAtImport, RecordAndVariable) {
+  getToTuDecl(
+      R"(
+      struct X;
+      )", Lang_CXX11);
+  Decl *FromTU = getTuDecl(
+      R"(
+      int X;
+      )", Lang_CXX11);
+  auto *FromVar = FirstDeclMatcher<VarDecl>().match(
+      FromTU, varDecl(hasName("X")));
+  auto *ToVar = Import(FromVar, Lang_C);
+  EXPECT_TRUE(ToVar);
+}
+
+TEST_P(CheckODRAtImport, VariableAndRecord) {
+  getToTuDecl(
+      R"(
+      int X;
+      )", Lang_C);
+  Decl *FromTU = getTuDecl(
+      R"(
+      struct X;
+      )", Lang_C);
+  auto *FromRecord = FirstDeclMatcher<RecordDecl>().match(
+      FromTU, recordDecl(hasName("X")));
+  auto *ToRecord = Import(FromRecord, Lang_C);
+  EXPECT_TRUE(ToRecord);
+}
+
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, DeclContextTest,
                         ::testing::Values(ArgVector()), );
 
@@ -3874,6 +4048,9 @@ INSTANTIATE_TEST_CASE_P(ParameterizedTests, CanonicalRedeclChain,
                         DefaultTestValuesForRunOptions, );
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportImplicitMethods,
+                        DefaultTestValuesForRunOptions, );
+
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, CheckODRAtImport,
                         DefaultTestValuesForRunOptions, );
 
 } // end namespace ast_matchers

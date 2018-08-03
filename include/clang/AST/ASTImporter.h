@@ -45,12 +45,10 @@ namespace clang {
   enum class ImportErrorKind {
       NameConflict, /// Naming ambiguity (likely ODR violation).
       UnsupportedConstruct, /// Not supported node or case.
-      InheritedDecl, /// A needed declaration could not be imported.
-      InheritedType, /// A needed type or type info could not be imported.
-      InheritedExpr, /// A needed expression could not be imported.
-      InheritedStmt, /// A needed statement could not be imported.
-      InheritedName, /// Declaration name or identifier could not be imported.
-      InheritedLocation /// Source location could not be imported.
+      TypeFailed, /// A needed type or type info could not be imported.
+      ExprFailed, /// A needed expression could not be imported.
+      StmtFailed, /// A needed statement could not be imported.
+      LocationFailed /// Source location could not be imported.
   };
 
   // \brief Returns with a list of declarations started from the canonical decl
@@ -95,8 +93,27 @@ namespace clang {
     /// context to the error status of the import of that declaration.
     /// This map contains only the declarations that were not correctly
     /// imported. The same declaration may or may not be included in
-    /// ImportedDecls.
+    /// ImportedDecls. This map is updated continuously during imports and never
+    /// cleared (like ImportedDecls).
     llvm::DenseMap<Decl *, ImportErrorKind> ImportDeclErrors;
+
+    /// Counter for errors encountered during import.
+    /// It can be used to detect what errors are found during import of a
+    /// specific Decl, by using the counter reset and get functions.
+    /// An import is considered as failed if the import directly failed (Decl
+    /// node could not be created correctly) or if a previous import of the
+    /// Decl node has failed. It is possible that import of a Decl node is
+    /// successful but some of its "subnodes" is not successful (for example at
+    /// members of a namespace, some members can be missed because import
+    /// failure but the import of the whole namespace itself still succeeds).
+    llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
+
+    /// Current error during import of a Decl.
+    /// This error code will be used for any Decl for which Import returns
+    /// nullptr. It must be set in any Import function that can cause a Decl
+    /// import to return nullptr, including import functions for non-decl
+    /// types.
+    llvm::Optional<ImportErrorKind> CurrentImportDeclError;
 
     /// \brief Mapping from the already-imported statements in the "from"
     /// context to the corresponding statements in the "to" context.
@@ -114,14 +131,6 @@ namespace clang {
     /// \brief Declaration (from, to) pairs that are known not to be equivalent
     /// (which we have already complained about).
     NonEquivalentDeclSet NonEquivalentDecls;
-
-    /// This flag signs if the Importer encountered an unsupported construct
-    /// during the last import process.
-    bool EncounteredUnsupportedConstruct;
-
-    /// This flag signs if the Importer encountered an ODR problem
-    /// during the last import process.
-    bool EncounteredODRError;
 
   public:
     /// \brief Create a new AST importer.
@@ -173,10 +182,6 @@ namespace clang {
     /// it has already been imported from the "from" context.  Otherwise return
     /// NULL.
     Decl *GetAlreadyImportedOrNull(Decl *FromD);
-
-    /// \brief Return if import of the given declaration has failed and if yes
-    /// the kind of the problem.
-    llvm::Optional<ImportErrorKind> getImportDeclErrorIfAny(Decl *FromD) const;
 
     /// \brief Return the declaration of the built-in type "__va_list_tag" from
     /// the ASTContext instead of importing it.
@@ -349,10 +354,6 @@ namespace clang {
     /// Store and assign the imported declaration to its counterpart.
     Decl *MapImported(Decl *From, Decl *To);
 
-    /// Mark imported declaration with error.
-    /// Returns \c nullptr
-    Decl *setImportDeclError(Decl *From, ImportErrorKind Error);
-
     /// \brief Called by StructuralEquivalenceContext.  If a RecordDecl is
     /// being compared to another RecordDecl as part of import, completing the
     /// other RecordDecl may trigger importation of the first RecordDecl. This
@@ -366,11 +367,35 @@ namespace clang {
     bool IsStructurallyEquivalent(QualType From, QualType To,
                                   bool Complain = true);
 
-    llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
+    /// Return if import of the given declaration has failed and if yes
+    /// the kind of the problem. This gives the first error encountered with
+    /// the node.
+    llvm::Optional<ImportErrorKind> getImportDeclErrorIfAny(Decl *FromD) const;
 
-    unsigned int getImportErrorCount(ImportErrorKind Error) const;
+    /// Get if there was any import error since last counter reset.
     bool hasImportErrorCount() const;
+
+    /// Get count of error type after last count reset.
+    unsigned int getImportErrorCount(ImportErrorKind Error) const;
+
+    /// Increment count of error type.
+    void incrementImportErrorCount(ImportErrorKind Error);
+
+    /// Reset import error counts.
     void resetImportErrorCount();
+
+    /// Mark (newly) imported declaration with error.
+    void setImportDeclError(Decl *From, ImportErrorKind Error);
+    
+    /// Set current error for Decl import result, only if not set already.
+    /// Can be used at places where a specific error reason is known (there was
+    /// no last import operation that failed already).
+    void setCurrentImportDeclError(ImportErrorKind Error);
+    
+    /// Clear current error for Decl import result.
+    /// Should be used if an import operation succeeds even if it had Decl
+    /// import operations that have failed.
+    void resetCurrentImportDeclError();
   };
 }
 

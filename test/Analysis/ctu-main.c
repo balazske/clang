@@ -27,7 +27,7 @@ int getkey();
 int main() {
   clang_analyzer_eval(f(5) == 1);             // expected-warning{{TRUE}}
   clang_analyzer_eval(x == 0);                // expected-warning{{TRUE}}
-  clang_analyzer_eval(enumcheck() == 42);     // expected-warning{{TRUE}}
+  clang_analyzer_eval(enumcheck() == 42);     // expected-warning{{UNKNOWN}}
 
   return getkey();
 }

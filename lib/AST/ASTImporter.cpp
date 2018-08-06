@@ -7272,6 +7272,7 @@ Decl *ASTImporter::Import(Decl *FromD) {
   } else {
     auto Error = getImportDeclErrorIfAny(FromD);
     if (!Error) {
+      assert(CurrentImportDeclError && "Import error code was not set.");
       setImportDeclError(FromD, *CurrentImportDeclError);
       incrementImportErrorCount(*CurrentImportDeclError);
     }

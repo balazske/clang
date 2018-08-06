@@ -3860,8 +3860,8 @@ TEST_P(CheckODRAtImport, Class) {
       )", Lang_CXX);
   auto *FromClass = FirstDeclMatcher<CXXRecordDecl>().match(
       FromTU, cxxRecordDecl(hasName("X")));
-  auto *ToClass = Import(FromClass, Lang_CXX);
-  EXPECT_EQ(ToClass, nullptr);
+  auto *ImportedClass = Import(FromClass, Lang_CXX);
+  EXPECT_EQ(ImportedClass, nullptr);
 }
 
 TEST_P(CheckODRAtImport, DISABLED_Function) {
@@ -3875,8 +3875,8 @@ TEST_P(CheckODRAtImport, DISABLED_Function) {
       )", Lang_CXX);
   auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
       FromTU, functionDecl(hasName("f")));
-  auto *ToFunc = Import(FromFunc, Lang_CXX);
-  EXPECT_EQ(ToFunc, nullptr);
+  auto *ImportedFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_EQ(ImportedFunc, nullptr);
 }
 
 TEST_P(CheckODRAtImport, FunctionOverload) {
@@ -3890,8 +3890,8 @@ TEST_P(CheckODRAtImport, FunctionOverload) {
       )", Lang_CXX);
   auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
       FromTU, functionDecl(hasName("f")));
-  auto *ToFunc = Import(FromFunc, Lang_CXX);
-  EXPECT_TRUE(ToFunc);
+  auto *ImportedFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_TRUE(ImportedFunc);
 }
 
 TEST_P(CheckODRAtImport, ClassTemplate) {
@@ -3905,8 +3905,8 @@ TEST_P(CheckODRAtImport, ClassTemplate) {
       )", Lang_CXX11);
   auto *FromClass = FirstDeclMatcher<ClassTemplateDecl>().match(
       FromTU, classTemplateDecl(hasName("X")));
-  auto *ToClass = Import(FromClass, Lang_CXX);
-  EXPECT_EQ(ToClass, nullptr);
+  auto *ImportedClass = Import(FromClass, Lang_CXX);
+  EXPECT_EQ(ImportedClass, nullptr);
 }
 
 TEST_P(CheckODRAtImport, FunctionTemplate) {
@@ -3920,8 +3920,8 @@ TEST_P(CheckODRAtImport, FunctionTemplate) {
       )", Lang_CXX11);
   auto *FromFunc = FirstDeclMatcher<FunctionTemplateDecl>().match(
       FromTU, functionTemplateDecl(hasName("f")));
-  auto *ToFunc = Import(FromFunc, Lang_CXX);
-  EXPECT_TRUE(ToFunc);
+  auto *ImportedFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_TRUE(ImportedFunc);
 }
 
 TEST_P(CheckODRAtImport, VariableAndFunction) {
@@ -3935,8 +3935,8 @@ TEST_P(CheckODRAtImport, VariableAndFunction) {
       )", Lang_CXX11);
   auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
       FromTU, functionDecl(hasName("X")));
-  auto *ToFunc = Import(FromFunc, Lang_CXX);
-  EXPECT_EQ(ToFunc, nullptr);
+  auto *ImportedFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_EQ(ImportedFunc, nullptr);
 }
 
 TEST_P(CheckODRAtImport, FunctionAndVariable) {
@@ -3950,8 +3950,8 @@ TEST_P(CheckODRAtImport, FunctionAndVariable) {
       )", Lang_C);
   auto *FromVar = FirstDeclMatcher<VarDecl>().match(
       FromTU, varDecl(hasName("X")));
-  auto *ToVar = Import(FromVar, Lang_C);
-  EXPECT_EQ(ToVar, nullptr);
+  auto *ImportedVar = Import(FromVar, Lang_C);
+  EXPECT_EQ(ImportedVar, nullptr);
 }
 
 TEST_P(CheckODRAtImport, RecordAndFunction) {
@@ -3965,8 +3965,8 @@ TEST_P(CheckODRAtImport, RecordAndFunction) {
       )", Lang_CXX11);
   auto *FromFunc = FirstDeclMatcher<FunctionDecl>().match(
       FromTU, functionDecl(hasName("X")));
-  auto *ToFunc = Import(FromFunc, Lang_CXX);
-  EXPECT_TRUE(ToFunc);
+  auto *ImportedFunc = Import(FromFunc, Lang_CXX);
+  EXPECT_TRUE(ImportedFunc);
 }
 
 TEST_P(CheckODRAtImport, FunctionAndRecord) {
@@ -3980,8 +3980,8 @@ TEST_P(CheckODRAtImport, FunctionAndRecord) {
       )", Lang_C);
   auto *FromRecord = FirstDeclMatcher<RecordDecl>().match(
       FromTU, recordDecl(hasName("X")));
-  auto *ToRecord = Import(FromRecord, Lang_C);
-  EXPECT_TRUE(ToRecord);
+  auto *ImportedRecord = Import(FromRecord, Lang_C);
+  EXPECT_TRUE(ImportedRecord);
 }
 
 TEST_P(CheckODRAtImport, RecordAndVariable) {
@@ -3995,8 +3995,8 @@ TEST_P(CheckODRAtImport, RecordAndVariable) {
       )", Lang_CXX11);
   auto *FromVar = FirstDeclMatcher<VarDecl>().match(
       FromTU, varDecl(hasName("X")));
-  auto *ToVar = Import(FromVar, Lang_C);
-  EXPECT_TRUE(ToVar);
+  auto *ImportedVar = Import(FromVar, Lang_C);
+  EXPECT_TRUE(ImportedVar);
 }
 
 TEST_P(CheckODRAtImport, VariableAndRecord) {
@@ -4010,8 +4010,8 @@ TEST_P(CheckODRAtImport, VariableAndRecord) {
       )", Lang_C);
   auto *FromRecord = FirstDeclMatcher<RecordDecl>().match(
       FromTU, recordDecl(hasName("X")));
-  auto *ToRecord = Import(FromRecord, Lang_C);
-  EXPECT_TRUE(ToRecord);
+  auto *ImportedRecord = Import(FromRecord, Lang_C);
+  EXPECT_TRUE(ImportedRecord);
 }
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, DeclContextTest,

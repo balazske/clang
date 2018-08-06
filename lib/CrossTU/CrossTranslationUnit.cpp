@@ -74,7 +74,7 @@ STATISTIC(NumGetCTUSuccess, "The # of getCTUDefinition successfully return the "
 STATISTIC(NumUnsupportedNodeFound, "The # of imports when the ASTImporter "
                                    "encountered an unsupported AST Node");
 STATISTIC(NumODRErrorFound, "The # of imports when the ASTImporter "
-                            "encountered some kind of ODR violation");
+                            "encountered ODR violation");
 STATISTIC(NumTripleMismatch, "The # of triple mismatches");
 STATISTIC(NumLangMismatch, "The # of language mismatches");
 

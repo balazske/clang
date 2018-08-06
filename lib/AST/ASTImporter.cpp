@@ -374,6 +374,7 @@ namespace clang {
     Expr *VisitCXXNullPtrLiteralExpr(CXXNullPtrLiteralExpr *E);
     Expr *VisitIntegerLiteral(IntegerLiteral *E);
     Expr *VisitFloatingLiteral(FloatingLiteral *E);
+    Expr *VisitImaginaryLiteral(ImaginaryLiteral *E);
     Expr *VisitCharacterLiteral(CharacterLiteral *E);
     Expr *VisitStringLiteral(StringLiteral *E);
     Expr *VisitCompoundLiteralExpr(CompoundLiteralExpr *E);
@@ -4663,17 +4664,20 @@ Decl *ASTNodeImporter::VisitClassTemplateSpecializationDecl(
 
   // Try to find an existing specialization with these template arguments.
   void *InsertPos = nullptr;
-  ClassTemplateSpecializationDecl *D2
-    = ClassTemplate->findSpecialization(TemplateArgs, InsertPos);
-  ClassTemplateSpecializationDecl *PrevDecl = D2;
+  ClassTemplateSpecializationDecl *D2 = nullptr;
+  ClassTemplatePartialSpecializationDecl *PartialSpec =
+            dyn_cast<ClassTemplatePartialSpecializationDecl>(D);
+  if (PartialSpec)
+    D2 = ClassTemplate->findPartialSpecialization(TemplateArgs, InsertPos);
+  else
+    D2 = ClassTemplate->findSpecialization(TemplateArgs, InsertPos);
+  ClassTemplateSpecializationDecl * const PrevDecl = D2;
   RecordDecl *FoundDef = D2 ? D2->getDefinition() : nullptr;
   if (FoundDef) {
-    // We already have a class template specialization with these template
-    // arguments.
-
     if (!D->isCompleteDefinition()) {
       // The "From" translation unit only had a forward declaration; call it
       // the same declaration.
+      // TODO Handle the redecl chain properly!
       return Importer.MapImported(D, FoundDef);
     }
 
@@ -4698,13 +4702,11 @@ Decl *ASTNodeImporter::VisitClassTemplateSpecializationDecl(
 
       return FoundDef;
     }
-
-  } else {
-    // Create a new specialization.
-    if (ClassTemplatePartialSpecializationDecl *PartialSpec =
-        dyn_cast<ClassTemplatePartialSpecializationDecl>(D)) {
-
-      // Import TemplateArgumentListInfo
+  } else { // We either couldn't find any previous specialization in the "To"
+           // context,  or we found one but without definition.  Let's create a
+           // new specialization and register that at the class template.
+    if (PartialSpec) {
+      // Import TemplateArgumentListInfo.
       TemplateArgumentListInfo ToTAInfo;
       const auto &ASTTemplateArgs = *PartialSpec->getTemplateArgsAsWritten();
       if (ImportTemplateArgumentListInfo(ASTTemplateArgs, ToTAInfo))
@@ -4725,21 +4727,28 @@ Decl *ASTNodeImporter::VisitClassTemplateSpecializationDecl(
               D2, D, Importer.getToContext(), D->getTagKind(), DC, StartLoc,
               IdLoc, ToTPList, ClassTemplate,
               llvm::makeArrayRef(TemplateArgs.data(), TemplateArgs.size()),
-              ToTAInfo, CanonInjType, nullptr))
+              ToTAInfo, CanonInjType,
+              cast_or_null<ClassTemplatePartialSpecializationDecl>(PrevDecl)))
         return D2;
 
-    } else {
+      if (!PrevDecl) // We could not find any existing specialization.
+        // Add this partial specialization to the class template.
+        ClassTemplate->AddPartialSpecialization(
+            cast<ClassTemplatePartialSpecializationDecl>(D2), InsertPos);
+
+    } else { // Not a partial specialization.
       if (GetImportedOrCreateDecl(
               D2, D, Importer.getToContext(), D->getTagKind(), DC, StartLoc,
               IdLoc, ClassTemplate, TemplateArgs, PrevDecl))
         return D2;
+
+      if (!PrevDecl) // We could not find any existing specialization.
+        // Add this specialization to the class template.
+        ClassTemplate->AddSpecialization(D2, InsertPos);
     }
 
     D2->setSpecializationKind(D->getSpecializationKind());
 
-    // Add this specialization to the class template.
-    ClassTemplate->AddSpecialization(D2, InsertPos);
-    
     // Import the qualifier, if any.
     D2->setQualifierInfo(Importer.Import(D->getQualifierLoc()));
 
@@ -5784,6 +5793,7 @@ Expr *ASTNodeImporter::VisitIntegerLiteral(IntegerLiteral *E) {
                                 Importer.Import(E->getLocation()));
 }
 
+
 Expr *ASTNodeImporter::VisitFloatingLiteral(FloatingLiteral *E) {
   QualType T = Importer.Import(E->getType());
   if (T.isNull())
@@ -5792,6 +5802,19 @@ Expr *ASTNodeImporter::VisitFloatingLiteral(FloatingLiteral *E) {
   return FloatingLiteral::Create(Importer.getToContext(),
                                 E->getValue(), E->isExact(), T,
                                 Importer.Import(E->getLocation()));
+}
+
+Expr *ASTNodeImporter::VisitImaginaryLiteral(ImaginaryLiteral *E) {
+  QualType T = Importer.Import(E->getType());
+  if (T.isNull())
+    return nullptr;
+
+  Expr *SubE = Importer.Import(E->getSubExpr());
+  if (!SubE)
+    return nullptr;
+
+  return new (Importer.getToContext())
+      ImaginaryLiteral(SubE, T);
 }
 
 Expr *ASTNodeImporter::VisitCharacterLiteral(CharacterLiteral *E) {

@@ -550,6 +550,9 @@ const internal::VariadicDynCastAllOfMatcher<Decl, ClassTemplateDecl>
 const internal::VariadicDynCastAllOfMatcher<Decl,
                                             ClassTemplateSpecializationDecl>
     classTemplateSpecializationDecl;
+const internal::VariadicDynCastAllOfMatcher<
+    Decl, ClassTemplatePartialSpecializationDecl>
+    classTemplatePartialSpecializationDecl;
 const internal::VariadicDynCastAllOfMatcher<Decl, DeclaratorDecl>
     declaratorDecl;
 const internal::VariadicDynCastAllOfMatcher<Decl, ParmVarDecl> parmVarDecl;
@@ -684,6 +687,7 @@ const internal::VariadicDynCastAllOfMatcher<Stmt, CharacterLiteral>
 const internal::VariadicDynCastAllOfMatcher<Stmt, IntegerLiteral>
     integerLiteral;
 const internal::VariadicDynCastAllOfMatcher<Stmt, FloatingLiteral> floatLiteral;
+const internal::VariadicDynCastAllOfMatcher<Stmt, ImaginaryLiteral> imaginaryLiteral;
 const internal::VariadicDynCastAllOfMatcher<Stmt, UserDefinedLiteral>
     userDefinedLiteral;
 const internal::VariadicDynCastAllOfMatcher<Stmt, CompoundLiteralExpr>

@@ -420,6 +420,26 @@ extern const internal::VariadicDynCastAllOfMatcher<
     Decl, ClassTemplateSpecializationDecl>
     classTemplateSpecializationDecl;
 
+/// \brief Matches C++ class template partial specializations.
+///
+/// Given
+/// \code
+///   template<class T1, class T2, int I>
+///   class A {};
+///
+///   template<class T, int I>
+///   class A<T, T*, I> {};
+///
+///   template<>
+///   class A<int, int, 1> {};
+/// \endcode
+/// classTemplatePartialSpecializationDecl()
+///   matches the specialization \c A<T,T*,I> but not \c A<int,int,1>
+extern const internal::VariadicDynCastAllOfMatcher<
+    Decl, ClassTemplatePartialSpecializationDecl>
+    classTemplatePartialSpecializationDecl;
+
+
 /// \brief Matches declarator declarations (field, variable, function
 /// and non-type template parameter declarations).
 ///
@@ -1928,6 +1948,12 @@ extern const internal::VariadicDynCastAllOfMatcher<Stmt, IntegerLiteral>
 /// \endcode
 extern const internal::VariadicDynCastAllOfMatcher<Stmt, FloatingLiteral>
     floatLiteral;
+
+/// \brief Matches imaginary literals, which are based on integer and floating
+/// point literals
+/// e.g.: 1i, 1.0i
+extern const internal::VariadicDynCastAllOfMatcher<Stmt, ImaginaryLiteral>
+    imaginaryLiteral;
 
 /// \brief Matches user defined literal operator call.
 ///

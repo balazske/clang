@@ -83,15 +83,10 @@ namespace clang {
                           public StmtVisitor<ASTNodeImporter, Stmt *> {
     ASTImporter &Importer;
 
-    // Use this to simplify code at import of an object with an Import function
-    // that can fail (returns Expected<ImportT>).
+    // Use this instead of Importer.ImportOrError .
     template <typename ImportT>
     LLVM_NODISCARD llvm::Error ImportOrError(ImportT &To, const ImportT &From) {
-      auto ToOrErr = Importer.Import(From);
-      auto Err = ToOrErr.takeError();
-      if (!Err)
-        To = *ToOrErr;
-      return Err;
+      return Importer.ImportOrError(To, From);
     }
 
     // Wrapper for an overload set.
@@ -719,8 +714,12 @@ QualType ASTNodeImporter::VisitVariableArrayType(const VariableArrayType *T) {
   Expr *Size = Importer.Import(T->getSizeExpr());
   if (!Size)
     return QualType();
-  
-  SourceRange Brackets = Importer.Import(T->getBracketsRange());
+
+  SourceRange Brackets;
+  if (auto Err = ImportOrError(Brackets, T->getBracketsRange()))
+    // FIXME: return the error
+    return QualType();
+
   return Importer.getToContext().getVariableArrayType(ToElementType, Size,
                                                       T->getSizeModifier(),
                                                 T->getIndexTypeCVRQualifiers(),
@@ -739,7 +738,11 @@ QualType ASTNodeImporter::VisitDependentSizedArrayType(
   if (!Size && T->getSizeExpr())
     return QualType();
 
-  SourceRange Brackets = Importer.Import(T->getBracketsRange());
+  SourceRange Brackets;
+  if (auto Err = ImportOrError(Brackets, T->getBracketsRange()))
+    // FIXME: return the error
+    return QualType();
+
   return Importer.getToContext().getDependentSizedArrayType(
       ToElementType, Size, T->getSizeModifier(), T->getIndexTypeCVRQualifiers(),
       Brackets);
@@ -1229,8 +1232,10 @@ ASTNodeImporter::ImportDeclarationNameLoc(const DeclarationNameInfo &From,
     return;
 
   case DeclarationName::CXXOperatorName: {
-    SourceRange Range = From.getCXXOperatorNameRange();
-    To.setCXXOperatorNameRange(Importer.Import(Range));
+    SourceRange ToRange;
+    if (auto Err = ImportOrError(ToRange, From.getCXXOperatorNameRange()))
+      return;
+    To.setCXXOperatorNameRange(ToRange);
     return;
   }
   case DeclarationName::CXXLiteralOperatorName: {
@@ -1415,15 +1420,20 @@ bool ASTNodeImporter::ImportDefinition(RecordDecl *From, RecordDecl *To,
 
       // Ensure that we have a definition for the base.
       ImportDefinitionIfNeeded(Base1.getType()->getAsCXXRecordDecl());
-        
+
+      SourceRange Range;
+      if (auto Err = ImportOrError(Range, Base1.getSourceRange()))
+        // FIXME: handle error
+        return true;
+
       Bases.push_back(
-                    new (Importer.getToContext()) 
-                      CXXBaseSpecifier(Importer.Import(Base1.getSourceRange()),
-                                       Base1.isVirtual(),
-                                       Base1.isBaseOfClass(),
-                                       Base1.getAccessSpecifierAsWritten(),
-                                   Importer.Import(Base1.getTypeSourceInfo()),
-                                       EllipsisLoc));
+          new (Importer.getToContext()) CXXBaseSpecifier(
+              Range,
+              Base1.isVirtual(),
+              Base1.isBaseOfClass(),
+              Base1.getAccessSpecifierAsWritten(),
+              Importer.Import(Base1.getTypeSourceInfo()),
+              EllipsisLoc));
     }
     if (!Bases.empty())
       ToCXX->setBases(Bases.data(), Bases.size());
@@ -6254,7 +6264,10 @@ Expr *ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
   CXXNamedCastExpr *Named = cast<CXXNamedCastExpr>(E);
   SourceLocation ExprLoc = Importer.Import(Named->getOperatorLoc()),
       RParenLoc = Importer.Import(Named->getRParenLoc());
-  SourceRange Brackets = Importer.Import(Named->getAngleBrackets());
+  SourceRange Brackets;
+  if (auto Err = ImportOrError(Brackets, Named->getAngleBrackets()))
+    // FIXME: return the error
+    return nullptr;
 
   switch (E->getStmtClass()) {
   case Stmt::CXXStaticCastExprClass:
@@ -6437,9 +6450,14 @@ Expr *ASTNodeImporter::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *CE) {
   if (!Ctor)
     return nullptr;
 
+  SourceRange ToParenOrBraceRange;
+  if (auto Err = ImportOrError(ToParenOrBraceRange, CE->getParenOrBraceRange()))
+    // FIXME: return the error
+    return nullptr;
+
   return new (Importer.getToContext()) CXXTemporaryObjectExpr(
       Importer.getToContext(), Ctor, T, TInfo, Args,
-      Importer.Import(CE->getParenOrBraceRange()), CE->hadMultipleCandidates(),
+      ToParenOrBraceRange, CE->hadMultipleCandidates(),
       CE->isListInitialization(), CE->isStdInitListInitialization(),
       CE->requiresZeroInitialization());
 }
@@ -6537,6 +6555,21 @@ Expr *ASTNodeImporter::VisitCXXNewExpr(CXXNewExpr *CE) {
   if (!ToArrSize && CE->getArraySize())
     return nullptr;
 
+  SourceRange ToTypeIdParens;
+  if (auto Err = ImportOrError(ToTypeIdParens, CE->getTypeIdParens()))
+    // FIXME: return the error
+    return nullptr;
+
+  SourceRange ToSourceRange;
+  if (auto Err = ImportOrError(ToSourceRange, CE->getSourceRange()))
+    // FIXME: return the error
+    return nullptr;
+
+  SourceRange ToDirectInitRange;
+  if (auto Err = ImportOrError(ToDirectInitRange, CE->getDirectInitRange()))
+    // FIXME: return the error
+    return nullptr;
+
   return new (Importer.getToContext()) CXXNewExpr(
         Importer.getToContext(),
         CE->isGlobalNew(),
@@ -6544,10 +6577,10 @@ Expr *ASTNodeImporter::VisitCXXNewExpr(CXXNewExpr *CE) {
         CE->passAlignment(),
         CE->doesUsualArrayDeleteWantSize(),
         PlacementArgs,
-        Importer.Import(CE->getTypeIdParens()),
+        ToTypeIdParens,
         ToArrSize, CE->getInitializationStyle(), ToInit, T, TInfo,
-        Importer.Import(CE->getSourceRange()),
-        Importer.Import(CE->getDirectInitRange()));
+        ToSourceRange,
+        ToDirectInitRange);
 }
 
 Expr *ASTNodeImporter::VisitCXXDeleteExpr(CXXDeleteExpr *E) {
@@ -6588,15 +6621,21 @@ Expr *ASTNodeImporter::VisitCXXConstructExpr(CXXConstructExpr *E) {
   if (ImportContainerChecked(E->arguments(), ToArgs))
     return nullptr;
 
-  return CXXConstructExpr::Create(Importer.getToContext(), T,
-                                  Importer.Import(E->getLocation()),
-                                  ToCCD, E->isElidable(),
-                                  ToArgs, E->hadMultipleCandidates(),
-                                  E->isListInitialization(),
-                                  E->isStdInitListInitialization(),
-                                  E->requiresZeroInitialization(),
-                                  E->getConstructionKind(),
-                                  Importer.Import(E->getParenOrBraceRange()));
+  SourceRange ToParenOrBraceRange;
+  if (auto Err = ImportOrError(ToParenOrBraceRange, E->getParenOrBraceRange()))
+    // FIXME: return the error
+    return nullptr;
+  
+  return CXXConstructExpr::Create(
+      Importer.getToContext(), T,
+      Importer.Import(E->getLocation()),
+      ToCCD, E->isElidable(),
+      ToArgs, E->hadMultipleCandidates(),
+      E->isListInitialization(),
+      E->isStdInitListInitialization(),
+      E->requiresZeroInitialization(),
+      E->getConstructionKind(),
+      ToParenOrBraceRange);
 }
 
 Expr *ASTNodeImporter::VisitExprWithCleanups(ExprWithCleanups *EWC) {
@@ -6998,8 +7037,13 @@ Expr *ASTNodeImporter::VisitLambdaExpr(LambdaExpr *LE) {
   if (ImportContainerChecked(LE->capture_inits(), InitCaptures))
     return nullptr;
 
+  SourceRange ToIntroducerRange;
+  if (auto Err = ImportOrError(ToIntroducerRange, LE->getIntroducerRange()))
+    // FIXME: return the error
+    return nullptr;
+
   return LambdaExpr::Create(Importer.getToContext(), ToClass,
-                            Importer.Import(LE->getIntroducerRange()),
+                            ToIntroducerRange,
                             LE->getCaptureDefault(),
                             Importer.Import(LE->getCaptureDefaultLoc()),
                             Captures,
@@ -7133,7 +7177,10 @@ Expr *ASTNodeImporter::VisitCXXNamedCastExpr(CXXNamedCastExpr *E) {
   TypeSourceInfo *ToWritten = Importer.Import(E->getTypeInfoAsWritten());
   SourceLocation ToOperatorLoc = Importer.Import(E->getOperatorLoc());
   SourceLocation ToRParenLoc = Importer.Import(E->getRParenLoc());
-  SourceRange ToAngleBrackets = Importer.Import(E->getAngleBrackets());
+  SourceRange ToAngleBrackets;
+  if (auto Err = ImportOrError(ToAngleBrackets, E->getAngleBrackets()))
+    // FIXME: return the error
+    return nullptr;
   
   if (isa<CXXStaticCastExpr>(E)) {
     return CXXStaticCastExpr::Create(
@@ -7202,13 +7249,18 @@ Expr *ASTNodeImporter::VisitCXXTypeidExpr(CXXTypeidExpr *E) {
   if (ToType.isNull())
     return nullptr;
 
+  SourceRange ToSourceRange;
+  if (auto Err = ImportOrError(ToSourceRange, E->getSourceRange()))
+    // FIXME: return the error
+    return nullptr;
+
   if (E->isTypeOperand()) {
     TypeSourceInfo *TSI = Importer.Import(E->getTypeOperandSourceInfo());
     if (!TSI)
       return nullptr;
 
     return new (Importer.getToContext())
-        CXXTypeidExpr(ToType, TSI, Importer.Import(E->getSourceRange()));
+        CXXTypeidExpr(ToType, TSI, ToSourceRange);
   }
 
   Expr *Op = Importer.Import(E->getExprOperand());
@@ -7216,7 +7268,7 @@ Expr *ASTNodeImporter::VisitCXXTypeidExpr(CXXTypeidExpr *E) {
     return nullptr;
 
   return new (Importer.getToContext())
-      CXXTypeidExpr(ToType, Op, Importer.Import(E->getSourceRange()));
+      CXXTypeidExpr(ToType, Op, ToSourceRange);
 }
 
 void ASTNodeImporter::ImportOverrides(CXXMethodDecl *ToMethod,
@@ -7563,7 +7615,11 @@ NestedNameSpecifierLoc ASTImporter::Import(NestedNameSpecifierLoc FromNNS) {
       break;
 
     case NestedNameSpecifier::Super: {
-      SourceRange ToRange = Import(NNS.getSourceRange());
+      SourceRange ToRange;
+      if (auto Err = ImportOrError(ToRange, NNS.getSourceRange()))
+        // FIXME: return the error
+        return NestedNameSpecifierLoc();
+
       Builder.MakeSuper(getToContext(),
                         Spec->getAsRecordDecl(),
                         ToRange.getBegin(),
@@ -7687,7 +7743,7 @@ SourceLocation ASTImporter::Import(SourceLocation FromLoc) {
   return ret;
 }
 
-SourceRange ASTImporter::Import(SourceRange FromRange) {
+Expected<SourceRange> ASTImporter::Import(SourceRange FromRange) {
   return SourceRange(Import(FromRange.getBegin()), Import(FromRange.getEnd()));
 }
 
@@ -7791,8 +7847,13 @@ CXXBaseSpecifier *ASTImporter::Import(const CXXBaseSpecifier *BaseSpec) {
   if (Pos != ImportedCXXBaseSpecifiers.end())
     return Pos->second;
 
+  SourceRange ImportedSourceRange;
+  if (auto Err = ImportOrError(ImportedSourceRange, BaseSpec->getSourceRange()))
+    // FIXME: return the error
+    return nullptr;
+
   CXXBaseSpecifier *Imported = new (ToContext) CXXBaseSpecifier(
-        Import(BaseSpec->getSourceRange()),
+        ImportedSourceRange,
         BaseSpec->isVirtual(), BaseSpec->isBaseOfClass(),
         BaseSpec->getAccessSpecifierAsWritten(),
         Import(BaseSpec->getTypeSourceInfo()),

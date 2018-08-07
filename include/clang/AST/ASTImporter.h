@@ -155,7 +155,21 @@ namespace clang {
                 bool MinimalImport);
     
     virtual ~ASTImporter();
-    
+
+    /// \brief Import the given object, returns the result.
+    /// 
+    /// \param To Import the object into this variable.
+    /// \param From Object to import.
+    /// \return Error information (success or error).
+    template <typename ImportT>
+    llvm::Error ImportOrError(ImportT &To, const ImportT &From) {
+      auto ToOrErr = Import(From);
+      auto Err = ToOrErr.takeError();
+      if (!Err)
+        To = *ToOrErr;
+      return Err;
+    }
+
     /// \brief Whether the importer will perform a minimal import, creating
     /// to-be-completed forward declarations when possible.
     bool isMinimalImport() const { return Minimal; }
@@ -244,8 +258,7 @@ namespace clang {
     /// the "to" context.
     ///
     /// \returns the equivalent source range in the "to" context, or error.
-    //Expected<SourceRange> Import(SourceRange FromRange);
-    SourceRange Import(SourceRange FromRange);
+    Expected<SourceRange> Import(SourceRange FromRange);
 
     /// \brief Import the given declaration name from the "from"
     /// context into the "to" context.
@@ -284,6 +297,7 @@ namespace clang {
     /// \returns the equivalent CXXBaseSpecifier in the source manager of the
     /// "to" context.
     CXXBaseSpecifier *Import(const CXXBaseSpecifier *FromSpec);
+    //Expected<CXXBaseSpecifier *> Import(const CXXBaseSpecifier *FromSpec);
 
     /// \brief Import the definition of the given declaration, including all of
     /// the declarations it contains.

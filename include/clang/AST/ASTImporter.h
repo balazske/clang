@@ -21,6 +21,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Optional.h"
+#include "llvm/Support/Error.h"
 
 namespace clang {
 
@@ -37,18 +38,28 @@ namespace clang {
   class Stmt;
   class TypeSourceInfo;
 
-  /// \brief Kind of error when importing a declaration.
-  /// The term 'inherited' is used to indicate that the current object could
-  /// not be imported because import of a (direct) dependency has failed.
-  /// The real source of the error in this case is not the current object,
-  /// instead one of its dependencies.
-  enum class ImportErrorKind {
-      NameConflict, /// Naming ambiguity (likely ODR violation).
-      UnsupportedConstruct, /// Not supported node or case.
-      TypeFailed, /// A needed type or type info could not be imported.
-      ExprFailed, /// A needed expression could not be imported.
-      StmtFailed, /// A needed statement could not be imported.
-      LocationFailed /// Source location could not be imported.
+  class ImportError : public llvm::ErrorInfo<ImportError> {
+  public:
+    /// \brief Kind of error when importing a declaration.
+    /// The term 'inherited' is used to indicate that the current object could
+    /// not be imported because import of a (direct) dependency has failed.
+    /// The real source of the error in this case is not the current object,
+    /// instead one of its dependencies.
+    enum ErrorKind {
+        NameConflict, /// Naming ambiguity (likely ODR violation).
+        UnsupportedConstruct, /// Not supported node or case.
+        Unknown /// Other error.
+    };
+
+    ErrorKind Error;
+
+    static char ID;
+
+    ImportError() : Error(Unknown) {}
+    ImportError(ErrorKind Error) : Error(Error) {}
+
+    void log(raw_ostream &OS) const override;
+    std::error_code convertToErrorCode() const override;
   };
 
   // \brief Returns with a list of declarations started from the canonical decl
@@ -95,7 +106,7 @@ namespace clang {
     /// imported. The same declaration may or may not be included in
     /// ImportedDecls. This map is updated continuously during imports and never
     /// cleared (like ImportedDecls).
-    llvm::DenseMap<Decl *, ImportErrorKind> ImportDeclErrors;
+    llvm::DenseMap<Decl *, ImportError> ImportDeclErrors;
 
     /// Counter for errors encountered during import.
     /// It can be used to detect what errors are found during import of a
@@ -106,14 +117,7 @@ namespace clang {
     /// successful but some of its "subnodes" is not successful (for example at
     /// members of a namespace, some members can be missed because import
     /// failure but the import of the whole namespace itself still succeeds).
-    llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
-
-    /// Current error during import of a Decl.
-    /// This error code will be used for any Decl for which Import returns
-    /// nullptr. It must be set in any Import function that can cause a Decl
-    /// import to return nullptr, including import functions for non-decl
-    /// types.
-    llvm::Optional<ImportErrorKind> CurrentImportDeclError;
+    //llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
 
     /// \brief Mapping from the already-imported statements in the "from"
     /// context to the corresponding statements in the "to" context.
@@ -159,22 +163,24 @@ namespace clang {
     /// \brief Import the given type from the "from" context into the "to"
     /// context.
     ///
-    /// \returns the equivalent type in the "to" context, or a NULL type if
-    /// an error occurred.
+    /// \returns the equivalent type in the "to" context, or error.
+    //Expected<QualType> Import(QualType FromT);
     QualType Import(QualType FromT);
 
     /// \brief Import the given type source information from the
     /// "from" context into the "to" context.
     ///
     /// \returns the equivalent type source information in the "to"
-    /// context, or NULL if an error occurred.
+    /// context, or error.
+    //Expected<TypeSourceInfo *> Import(TypeSourceInfo *FromTSI);
     TypeSourceInfo *Import(TypeSourceInfo *FromTSI);
 
     /// \brief Import the given declaration from the "from" context into the 
     /// "to" context.
     ///
-    /// \returns the equivalent declaration in the "to" context, or a NULL type 
-    /// if an error occurred.
+    /// \returns the equivalent declaration in the "to" context, or error.
+    //Expected<Decl *> Import(Decl *FromD);
+    //Expected<Decl *> Import(const Decl *FromD);
     Decl *Import(Decl *FromD);
     Decl *Import(const Decl *FromD);
 
@@ -197,22 +203,23 @@ namespace clang {
     /// \brief Import the given expression from the "from" context into the
     /// "to" context.
     ///
-    /// \returns the equivalent expression in the "to" context, or NULL if
-    /// an error occurred.
+    /// \returns the equivalent expression in the "to" context, or error.
+    //Expected<Expr *> Import(Expr *FromE);
     Expr *Import(Expr *FromE);
 
     /// \brief Import the given statement from the "from" context into the
     /// "to" context.
     ///
-    /// \returns the equivalent statement in the "to" context, or NULL if
-    /// an error occurred.
+    /// \returns the equivalent statement in the "to" context, or error.
+    //Expected<Stmt *> Import(Stmt *FromS);
     Stmt *Import(Stmt *FromS);
 
     /// \brief Import the given nested-name-specifier from the "from"
     /// context into the "to" context.
     ///
     /// \returns the equivalent nested-name-specifier in the "to"
-    /// context, or NULL if an error occurred.
+    /// context, or error.
+    //Expected<NestedNameSpecifier *> Import(NestedNameSpecifier *FromNNS);
     NestedNameSpecifier *Import(NestedNameSpecifier *FromNNS);
 
     /// \brief Import the given nested-name-specifier from the "from"
@@ -229,23 +236,22 @@ namespace clang {
     /// \brief Import the given source location from the "from" context into
     /// the "to" context.
     ///
-    /// \returns the equivalent source location in the "to" context, or an
-    /// invalid source location if an error occurred.
+    /// \returns the equivalent source location in the "to" context, or error.
+    //Expected<SourceLocation> Import(SourceLocation FromLoc);
     SourceLocation Import(SourceLocation FromLoc);
 
     /// \brief Import the given source range from the "from" context into
     /// the "to" context.
     ///
-    /// \returns the equivalent source range in the "to" context, or an
-    /// invalid source location if an error occurred.
+    /// \returns the equivalent source range in the "to" context, or error.
+    //Expected<SourceRange> Import(SourceRange FromRange);
     SourceRange Import(SourceRange FromRange);
 
     /// \brief Import the given declaration name from the "from"
     /// context into the "to" context.
     ///
-    /// \returns the equivalent declaration name in the "to" context,
-    /// or an empty declaration name if an error occurred.
-    DeclarationName Import(DeclarationName FromName);
+    /// \returns the equivalent declaration name in the "to" context, or error.
+    Expected<DeclarationName> Import(DeclarationName FromName);
 
     /// \brief Import the given identifier from the "from" context
     /// into the "to" context.
@@ -370,32 +376,22 @@ namespace clang {
     /// Return if import of the given declaration has failed and if yes
     /// the kind of the problem. This gives the first error encountered with
     /// the node.
-    llvm::Optional<ImportErrorKind> getImportDeclErrorIfAny(Decl *FromD) const;
-
-    /// Get if there was any import error since last counter reset.
-    bool hasImportErrorCount() const;
-
-    /// Get count of error type after last count reset.
-    unsigned int getImportErrorCount(ImportErrorKind Error) const;
-
-    /// Increment count of error type.
-    void incrementImportErrorCount(ImportErrorKind Error);
-
-    /// Reset import error counts.
-    void resetImportErrorCount();
+    llvm::Optional<ImportError> getImportDeclErrorIfAny(Decl *FromD) const;
 
     /// Mark (newly) imported declaration with error.
-    void setImportDeclError(Decl *From, ImportErrorKind Error);
-    
-    /// Set current error for Decl import result, only if not set already.
-    /// Can be used at places where a specific error reason is known (there was
-    /// no last import operation that failed already).
-    void setCurrentImportDeclError(ImportErrorKind Error);
-    
-    /// Clear current error for Decl import result.
-    /// Should be used if an import operation succeeds even if it had Decl
-    /// import operations that have failed.
-    void resetCurrentImportDeclError();
+    void setImportDeclError(Decl *From, ImportError Error);
+
+    /// Get if there was any import error since last counter reset.
+    //bool hasImportErrorCount() const;
+
+    /// Get count of error type after last count reset.
+    //unsigned int getImportErrorCount(ImportErrorKind Error) const;
+
+    /// Increment count of error type.
+    //void incrementImportErrorCount(ImportErrorKind Error);
+
+    /// Reset import error counts.
+    //void resetImportErrorCount();
   };
 }
 

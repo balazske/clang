@@ -71,10 +71,10 @@ STATISTIC(
     "The # of getCTUDefinition called but the function is not in other TU");
 STATISTIC(NumGetCTUSuccess, "The # of getCTUDefinition successfully return the "
                             "requested function's body");
-STATISTIC(NumUnsupportedNodeFound, "The # of imports when the ASTImporter "
-                                   "encountered an unsupported AST Node");
-STATISTIC(NumODRErrorFound, "The # of imports when the ASTImporter "
-                            "encountered ODR violation");
+//STATISTIC(NumUnsupportedNodeFound, "The # of imports when the ASTImporter "
+//                                   "encountered an unsupported AST Node");
+//STATISTIC(NumODRErrorFound, "The # of imports when the ASTImporter "
+//                            "encountered ODR violation");
 STATISTIC(NumTripleMismatch, "The # of triple mismatches");
 STATISTIC(NumLangMismatch, "The # of language mismatches");
 
@@ -336,20 +336,20 @@ CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD) {
   assert(FD->hasBody() && "Functions to be imported should have body.");
 
   ASTImporter &Importer = getOrCreateASTImporter(FD->getASTContext());
-  Importer.resetImportErrorCount();
+//  Importer.resetImportErrorCount();
   auto *ToDecl = cast_or_null<FunctionDecl>(
       Importer.Import(const_cast<FunctionDecl *>(FD)));
-  if (Importer.hasImportErrorCount()) {
-    if (ToDecl)
-      InvalidFunctions.insert(ToDecl);
-    if (unsigned int Count = Importer.getImportErrorCount(
-        ImportErrorKind::UnsupportedConstruct))
-      NumUnsupportedNodeFound += Count;
-    if (unsigned int Count = Importer.getImportErrorCount(
-        ImportErrorKind::NameConflict))
-      NumODRErrorFound += Count;
-    return nullptr;
-  }
+//  if (Importer.hasImportErrorCount()) {
+//    if (ToDecl)
+//      InvalidFunctions.insert(ToDecl);
+//    if (unsigned int Count = Importer.getImportErrorCount(
+//        ImportErrorKind::UnsupportedConstruct))
+//      NumUnsupportedNodeFound += Count;
+//    if (unsigned int Count = Importer.getImportErrorCount(
+//        ImportErrorKind::NameConflict))
+//      NumODRErrorFound += Count;
+//    return nullptr;
+//  }
 
   assert(ToDecl && "Failed to import function.");
   assert(ToDecl->hasBody() && "Imported functions should have body.");

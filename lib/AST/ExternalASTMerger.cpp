@@ -57,7 +57,14 @@ LookupSameContext(Source<TranslationUnitDecl *> SourceTU, const DeclContext *DC,
   }
   auto *ND = cast<NamedDecl>(DC);
   DeclarationName Name = ND->getDeclName();
-  Source<DeclarationName> SourceName = ReverseImporter.Import(Name);
+  auto NameOrErr = ReverseImporter.Import(Name);
+  if (auto Err = NameOrErr.takeError()) {
+    // Ignore error.
+    handleAllErrors(std::move(Err), [](const ImportError&) { });
+    return nullptr;
+  }
+  //Source<DeclarationName> SourceName = ReverseImporter.Import(Name);
+  Source<DeclarationName> SourceName = *NameOrErr;
   DeclContext::lookup_result SearchResult =
       SourceParentDC.get()->lookup(SourceName.get());
   size_t SearchResultSize = SearchResult.size();
@@ -385,7 +392,14 @@ bool ExternalASTMerger::FindExternalVisibleDeclsByName(const DeclContext *DC,
 
   ForEachMatchingDC(DC, [&](ASTImporter &Forward, ASTImporter &Reverse,
                             Source<const DeclContext *> SourceDC) -> bool {
-    DeclarationName FromName = Reverse.Import(Name);
+    auto NameOrErr = Reverse.Import(Name);
+    if (auto Err = NameOrErr.takeError()) {
+      // Ignore error.
+      handleAllErrors(std::move(Err), [](const ImportError&) { });
+      return false;
+    }
+    DeclarationName FromName(*NameOrErr);
+    //DeclarationName FromName = Reverse.Import(Name);
     DeclContextLookupResult Result = SourceDC.get()->lookup(FromName);
     for (NamedDecl *FromD : Result) {
       FilterFoundDecl(std::make_pair(FromD, &Forward));

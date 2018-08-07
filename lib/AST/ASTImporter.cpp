@@ -28,6 +28,30 @@
 
 namespace clang {
 
+  using llvm::make_error;
+
+  void ImportError::log(raw_ostream &OS) const {
+    switch (Error) {
+    case NameConflict:
+      OS << "NameConflict";
+      break;
+    case UnsupportedConstruct:
+      OS << "UnsupportedConstruct";
+      break;
+    case Unknown:
+      OS << "Unknown";
+      break;
+    default:
+      llvm_unreachable("Invalid error code.");
+    }
+  }
+
+  std::error_code ImportError::convertToErrorCode() const {
+    llvm_unreachable("Function not implemented.");
+  }
+
+  char ImportError::ID;
+
   template <class T>
   SmallVector<Decl*, 2>
   getCanonicalForwardRedeclChain(Redeclarable<T>* D) {
@@ -58,6 +82,17 @@ namespace clang {
                           public DeclVisitor<ASTNodeImporter, Decl *>,
                           public StmtVisitor<ASTNodeImporter, Stmt *> {
     ASTImporter &Importer;
+
+    // Use this to simplify code at import of an object with an Import function
+    // that can fail (returns Expected<ImportT>).
+    template <typename ImportT>
+    LLVM_NODISCARD llvm::Error ImportOrError(ImportT &To, const ImportT &From) {
+      auto ToOrErr = Importer.Import(From);
+      auto Err = ToOrErr.takeError();
+      if (!Err)
+        To = *ToOrErr;
+      return Err;
+    }
 
     // Wrapper for an overload set.
     template <typename ToDeclT> struct CallOverloadedCreateFun {
@@ -1121,8 +1156,7 @@ bool ASTNodeImporter::ImportDeclParts(NamedDecl *D, DeclContext *&DC,
       if (RT && RT->getDecl() == D) {
         Importer.FromDiag(D->getLocation(), diag::err_unsupported_ast_node)
             << D->getDeclKindName();
-        Importer.setCurrentImportDeclError(
-            ImportErrorKind::UnsupportedConstruct);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
         return true;
       }
     }
@@ -1141,8 +1175,8 @@ bool ASTNodeImporter::ImportDeclParts(NamedDecl *D, DeclContext *&DC,
   }
   
   // Import the name of this declaration.
-  Name = Importer.Import(D->getDeclName());
-  if (D->getDeclName() && !Name)
+  if (auto Err = ImportOrError(Name, D->getDeclName()))
+    // FIXME: handle error
     return true;
   
   // Import the location of this declaration.
@@ -1700,14 +1734,14 @@ bool ASTNodeImporter::IsStructuralMatch(VarTemplateDecl *From,
 
 Decl *ASTNodeImporter::VisitDecl(Decl *D) {
   llvm_unreachable("Unsupported Decl at import, should be fixed.");
-  Importer.setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
+  //Importer.setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
   return nullptr;
 }
 
 Decl *ASTNodeImporter::VisitImportDecl(ImportDecl *D) {
   Importer.FromDiag(D->getLocation(), diag::err_unsupported_ast_node)
       << D->getDeclKindName();
-  Importer.setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
+  //Importer.setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
   return nullptr;
 }
 
@@ -1840,7 +1874,7 @@ Decl *ASTNodeImporter::VisitNamespaceDecl(NamespaceDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -1962,7 +1996,7 @@ Decl *ASTNodeImporter::VisitTypedefNameDecl(TypedefNameDecl *D, bool IsAlias) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -2040,7 +2074,7 @@ Decl *ASTNodeImporter::VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D) {
                                          ConflictingDecls.data(),
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -2118,7 +2152,10 @@ Decl *ASTNodeImporter::VisitEnumDecl(EnumDecl *D) {
   unsigned IDNS = Decl::IDNS_Tag;
   DeclarationName SearchName = Name;
   if (!SearchName && D->getTypedefNameForAnonDecl()) {
-    SearchName = Importer.Import(D->getTypedefNameForAnonDecl()->getDeclName());
+    if (auto Err = ImportOrError(
+        SearchName, D->getTypedefNameForAnonDecl()->getDeclName()))
+      // FIXME: handle error
+      return nullptr;
     IDNS = Decl::IDNS_Ordinary;
   } else if (Importer.getToContext().getLangOpts().CPlusPlus)
     IDNS |= Decl::IDNS_Ordinary;
@@ -2151,7 +2188,7 @@ Decl *ASTNodeImporter::VisitEnumDecl(EnumDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -2227,8 +2264,11 @@ Decl *ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
   unsigned IDNS = Decl::IDNS_Tag;
   DeclarationName SearchName = Name;
   if (!SearchName && D->getTypedefNameForAnonDecl()) {
-    SearchName = Importer.Import(D->getTypedefNameForAnonDecl()->getDeclName());
-    IDNS |= Decl::IDNS_Ordinary;
+    if (auto Err = ImportOrError(
+        SearchName, D->getTypedefNameForAnonDecl()->getDeclName()))
+      // FIXME: handle error
+      return nullptr;
+    IDNS = Decl::IDNS_Ordinary;
   } else if (Importer.getToContext().getLangOpts().CPlusPlus)
     IDNS |= Decl::IDNS_Ordinary | Decl::IDNS_TagFriend;
 
@@ -2339,7 +2379,7 @@ Decl *ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -2494,7 +2534,7 @@ Decl *ASTNodeImporter::VisitEnumConstantDecl(EnumConstantDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -2703,7 +2743,7 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }    
@@ -2975,7 +3015,7 @@ Decl *ASTNodeImporter::VisitFieldDecl(FieldDecl *D) {
       Importer.ToDiag(FoundField->getLocation(), diag::note_odr_value_here)
         << FoundField->getType();
 
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
   }
@@ -3049,7 +3089,7 @@ Decl *ASTNodeImporter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
       Importer.ToDiag(FoundField->getLocation(), diag::note_odr_value_here)
         << FoundField->getType();
 
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
   }
@@ -3181,7 +3221,7 @@ Decl *ASTNodeImporter::VisitObjCIvarDecl(ObjCIvarDecl *D) {
       Importer.ToDiag(FoundIvar->getLocation(), diag::note_odr_value_here)
         << FoundIvar->getType();
 
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
   }
@@ -3313,7 +3353,7 @@ Decl *ASTNodeImporter::VisitVarDecl(VarDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
     }
@@ -3358,8 +3398,9 @@ Decl *ASTNodeImporter::VisitImplicitParamDecl(ImplicitParamDecl *D) {
   DeclContext *DC = Importer.getToContext().getTranslationUnitDecl();
   
   // Import the name of this declaration.
-  DeclarationName Name = Importer.Import(D->getDeclName());
-  if (D->getDeclName() && !Name)
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, D->getDeclName()))
+    // FIXME: handle error
     return nullptr;
 
   // Import the location of this declaration.
@@ -3385,8 +3426,9 @@ Decl *ASTNodeImporter::VisitParmVarDecl(ParmVarDecl *D) {
   DeclContext *DC = Importer.getToContext().getTranslationUnitDecl();
   
   // Import the name of this declaration.
-  DeclarationName Name = Importer.Import(D->getDeclName());
-  if (D->getDeclName() && !Name)
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, D->getDeclName()))
+    // FIXME: handle error
     return nullptr;
 
   // Import the location of this declaration.
@@ -3466,7 +3508,7 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
                         diag::note_odr_objc_method_here)
           << D->isInstanceMethod() << Name;
 
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
 
@@ -3479,7 +3521,7 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
                         diag::note_odr_objc_method_here)
           << D->isInstanceMethod() << Name;
   
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
 
@@ -3496,7 +3538,7 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
           Importer.ToDiag((*FoundP)->getLocation(), diag::note_odr_value_here)
             << (*FoundP)->getType();
 
-          Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+          //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
           return nullptr;
         }
       }
@@ -3510,7 +3552,7 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
                         diag::note_odr_objc_method_here)
           << D->isInstanceMethod() << Name;
 
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
 
@@ -4251,7 +4293,7 @@ Decl *ASTNodeImporter::VisitObjCImplementationDecl(ObjCImplementationDecl *D) {
       else
         Importer.FromDiag(D->getLocation(),
                           diag::note_odr_objc_missing_superclass);
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
   }
@@ -4287,7 +4329,7 @@ Decl *ASTNodeImporter::VisitObjCPropertyDecl(ObjCPropertyDecl *D) {
         Importer.ToDiag(FoundProp->getLocation(), diag::note_odr_value_here)
           << FoundProp->getType();
 
-        Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
         return nullptr;
       }
 
@@ -4389,7 +4431,7 @@ Decl *ASTNodeImporter::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D) {
                         diag::note_odr_objc_property_impl_kind)
         << D->getPropertyDecl()->getDeclName()
         << (D->getPropertyImplementation() == ObjCPropertyImplDecl::Dynamic);
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
     
@@ -4404,7 +4446,7 @@ Decl *ASTNodeImporter::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D) {
       Importer.FromDiag(D->getPropertyIvarDeclLoc(), 
                         diag::note_odr_objc_synthesize_ivar_here)
         << D->getPropertyIvarDecl()->getDeclName();
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
     
@@ -4434,8 +4476,9 @@ Decl *ASTNodeImporter::VisitTemplateTypeParmDecl(TemplateTypeParmDecl *D) {
 Decl *
 ASTNodeImporter::VisitNonTypeTemplateParmDecl(NonTypeTemplateParmDecl *D) {
   // Import the name of this declaration.
-  DeclarationName Name = Importer.Import(D->getDeclName());
-  if (D->getDeclName() && !Name)
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, D->getDeclName()))
+    // FIXME: handle error
     return nullptr;
 
   // Import the location of this declaration.
@@ -4466,8 +4509,9 @@ ASTNodeImporter::VisitNonTypeTemplateParmDecl(NonTypeTemplateParmDecl *D) {
 Decl *
 ASTNodeImporter::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
   // Import the name of this declaration.
-  DeclarationName Name = Importer.Import(D->getDeclName());
-  if (D->getDeclName() && !Name)
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, D->getDeclName()))
+    // FIXME: handle error
     return nullptr;
 
   // Import the location of this declaration.
@@ -4573,7 +4617,7 @@ Decl *ASTNodeImporter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
     }
     
     if (!Name) {
-      Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
+      //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
       return nullptr;
     }
   }
@@ -6632,8 +6676,12 @@ Expr *ASTNodeImporter::VisitMemberExpr(MemberExpr *E) {
   DeclAccessPair ToFoundDecl =
       DeclAccessPair::make(ToDecl, E->getFoundDecl().getAccess());
 
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, E->getMemberNameInfo().getName()))
+    // FIXME: handle error
+    return nullptr;
   DeclarationNameInfo ToMemberNameInfo(
-    Importer.Import(E->getMemberNameInfo().getName()),
+    Name,
     Importer.Import(E->getMemberNameInfo().getLoc()));
 
   TemplateArgumentListInfo ToTAInfo(Importer.Import(E->getLAngleLoc()),
@@ -6659,8 +6707,9 @@ Expr *ASTNodeImporter::VisitMemberExpr(MemberExpr *E) {
 
 Expr *
 ASTNodeImporter::VisitDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *E) {
-  DeclarationName Name = Importer.Import(E->getDeclName());
-  if (!E->getDeclName().isEmpty() && Name.isEmpty())
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, E->getDeclName()))
+    // FIXME: handle error
     return nullptr;
   DeclarationNameInfo NameInfo(Name, Importer.Import(E->getExprLoc()));
 
@@ -6685,9 +6734,11 @@ ASTNodeImporter::VisitDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *E) {
 }
 
 Expr *ASTNodeImporter::VisitUnresolvedMemberExpr(UnresolvedMemberExpr *E) {
-  DeclarationName Name = Importer.Import(E->getName());
-  if(!E->getName().isEmpty() && Name.isEmpty())
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, E->getName()))
+    // FIXME: handle error
     return nullptr;
+
   DeclarationNameInfo NameInfo(Name, Importer.Import(E->getNameLoc()));
   // Import additional name location/type info.
   ImportDeclarationNameLoc(E->getNameInfo(), NameInfo);
@@ -6781,8 +6832,9 @@ Expr *ASTNodeImporter::VisitCXXDependentScopeMemberExpr(
     ResInfo = &ToTAInfo;
   }
 
-  DeclarationName Name = Importer.Import(E->getMember());
-  if (!E->getMember().isEmpty() && Name.isEmpty())
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, E->getMember()))
+    // FIXME: handle error
     return nullptr;
 
   DeclarationNameInfo MemberNameInfo(Name, Importer.Import(E->getMemberLoc()));
@@ -6821,8 +6873,9 @@ Expr *ASTNodeImporter::VisitUnresolvedLookupExpr(UnresolvedLookupExpr *E) {
   if (E->getNamingClass() && !NamingClass)
     return nullptr;
 
-  DeclarationName Name = Importer.Import(E->getName());
-  if (E->getName() && !Name)
+  DeclarationName Name;
+  if (auto Err = ImportOrError(Name, E->getName()))
+    // FIXME: handle error
     return nullptr;
 
   DeclarationNameInfo NameInfo(Name, Importer.Import(E->getNameLoc()));
@@ -7203,7 +7256,7 @@ QualType ASTImporter::Import(QualType FromT) {
   QualType ToT = Importer.Visit(fromTy);
   if (ToT.isNull()) {
     // Set the error if not set already more specifically.
-    setCurrentImportDeclError(ImportErrorKind::TypeFailed);
+    //setCurrentImportDeclError(ImportErrorKind::TypeFailed);
     return ToT;
   }
   
@@ -7222,7 +7275,7 @@ TypeSourceInfo *ASTImporter::Import(TypeSourceInfo *FromTSI) {
   QualType T = Import(FromTSI->getType());
   if (T.isNull()) {
     // Set the error if not set already more specifically.
-    setCurrentImportDeclError(ImportErrorKind::TypeFailed);
+    //setCurrentImportDeclError(ImportErrorKind::TypeFailed);
     return nullptr;
   }
 
@@ -7273,8 +7326,8 @@ Decl *ASTImporter::Import(Decl *FromD) {
   // Try to import something that failed once: Do not try again and take it as
   // failed again.
   if (auto Error = getImportDeclErrorIfAny(FromD)) {
-    setCurrentImportDeclError(*Error);
-    incrementImportErrorCount(*Error);
+    //setCurrentImportDeclError(*Error);
+    //incrementImportErrorCount(*Error);
     return nullptr;
   }
 
@@ -7291,13 +7344,13 @@ Decl *ASTImporter::Import(Decl *FromD) {
   // Import the declaration.
   ToD = Importer.Visit(FromD);
   if (ToD) {
-    resetCurrentImportDeclError();
+    //resetCurrentImportDeclError();
   } else {
     auto Error = getImportDeclErrorIfAny(FromD);
     if (!Error) {
-      assert(CurrentImportDeclError && "Import error code was not set.");
-      setImportDeclError(FromD, *CurrentImportDeclError);
-      incrementImportErrorCount(*CurrentImportDeclError);
+      //assert(CurrentImportDeclError && "Import error code was not set.");
+      //setImportDeclError(FromD, *CurrentImportDeclError);
+      //incrementImportErrorCount(*CurrentImportDeclError);
     }
     return nullptr;
   }
@@ -7370,7 +7423,7 @@ Expr *ASTImporter::Import(Expr *FromE) {
   auto *ToE = cast_or_null<Expr>(Import(cast<Stmt>(FromE)));
   if (!ToE) {
     // Set the error if not set already more specifically.
-    setCurrentImportDeclError(ImportErrorKind::ExprFailed);
+    //setCurrentImportDeclError(ImportErrorKind::ExprFailed);
   }
   return ToE;
 }
@@ -7389,7 +7442,7 @@ Stmt *ASTImporter::Import(Stmt *FromS) {
   Stmt *ToS = Importer.Visit(FromS);
   if (!ToS) {
     // Set the error if not set already more specifically.
-    setCurrentImportDeclError(ImportErrorKind::StmtFailed);
+    //setCurrentImportDeclError(ImportErrorKind::StmtFailed);
     return nullptr;
   }
 
@@ -7662,7 +7715,8 @@ FileID ASTImporter::Import(FileID FromID) {
     // than mmap the files several times.
     const FileEntry *Entry = ToFileManager.getFile(Cache->OrigEntry->getName());
     if (!Entry) {
-      setCurrentImportDeclError(ImportErrorKind::LocationFailed);
+      //setCurrentImportDeclError(ImportErrorKind::LocationFailed);
+      // FIXME: is this an error?
       return FileID();
     }
     ToID = ToSM.createFileID(Entry, ToIncludeLoc, 
@@ -7725,7 +7779,7 @@ CXXCtorInitializer *ASTImporter::Import(CXXCtorInitializer *From) {
         CXXCtorInitializer(ToContext, ToTInfo, Import(From->getLParenLoc()),
                            ToExpr, Import(From->getRParenLoc()));
   } else {
-    setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
+    //setCurrentImportDeclError(ImportErrorKind::UnsupportedConstruct);
     // FIXME: assert ?
     return nullptr;
   }
@@ -7791,23 +7845,23 @@ void ASTImporter::ImportDefinition(Decl *From) {
   }
 }
 
-DeclarationName ASTImporter::Import(DeclarationName FromName) {
+Expected<DeclarationName> ASTImporter::Import(DeclarationName FromName) {
   if (!FromName)
     return DeclarationName();
 
   switch (FromName.getNameKind()) {
   case DeclarationName::Identifier:
-    return Import(FromName.getAsIdentifierInfo());
+    return DeclarationName(Import(FromName.getAsIdentifierInfo()));
 
   case DeclarationName::ObjCZeroArgSelector:
   case DeclarationName::ObjCOneArgSelector:
   case DeclarationName::ObjCMultiArgSelector:
-    return Import(FromName.getObjCSelector());
+    return DeclarationName(Import(FromName.getObjCSelector()));
 
   case DeclarationName::CXXConstructorName: {
     QualType T = Import(FromName.getCXXNameType());
     if (T.isNull())
-      return DeclarationName();
+      return make_error<ImportError>(ImportError::Unknown);
 
     return ToContext.DeclarationNames.getCXXConstructorName(
                                                ToContext.getCanonicalType(T));
@@ -7816,7 +7870,7 @@ DeclarationName ASTImporter::Import(DeclarationName FromName) {
   case DeclarationName::CXXDestructorName: {
     QualType T = Import(FromName.getCXXNameType());
     if (T.isNull())
-      return DeclarationName();
+      return make_error<ImportError>(ImportError::Unknown);
 
     return ToContext.DeclarationNames.getCXXDestructorName(
                                                ToContext.getCanonicalType(T));
@@ -7826,14 +7880,14 @@ DeclarationName ASTImporter::Import(DeclarationName FromName) {
     TemplateDecl *Template = cast_or_null<TemplateDecl>(
         Import(FromName.getCXXDeductionGuideTemplate()));
     if (!Template)
-      return DeclarationName();
+      return make_error<ImportError>(ImportError::Unknown);
     return ToContext.DeclarationNames.getCXXDeductionGuideName(Template);
   }
 
   case DeclarationName::CXXConversionFunctionName: {
     QualType T = Import(FromName.getCXXNameType());
     if (T.isNull())
-      return DeclarationName();
+      return make_error<ImportError>(ImportError::Unknown);
 
     return ToContext.DeclarationNames.getCXXConversionFunctionName(
                                                ToContext.getCanonicalType(T));
@@ -7945,42 +7999,33 @@ bool ASTImporter::IsStructurallyEquivalent(QualType From, QualType To,
   return Ctx.IsEquivalent(From, To);
 }
 
-llvm::Optional<ImportErrorKind> ASTImporter::getImportDeclErrorIfAny(
+llvm::Optional<ImportError> ASTImporter::getImportDeclErrorIfAny(
     Decl *FromD) const {
   auto Pos = ImportDeclErrors.find(FromD);
   if (Pos != ImportDeclErrors.end())
     return Pos->second;
   else
-    return Optional<ImportErrorKind>();
+    return Optional<ImportError>();
 }
 
-void ASTImporter::setImportDeclError(Decl *From, ImportErrorKind Error) {
+void ASTImporter::setImportDeclError(Decl *From, ImportError Error) {
   assert(ImportDeclErrors.find(From) == ImportDeclErrors.end() &&
       "Setting import error allowed only once for a Decl.");
   ImportDeclErrors[From] = Error;
 }
 
-void ASTImporter::setCurrentImportDeclError(ImportErrorKind Error) {
-  if (!CurrentImportDeclError)
-    CurrentImportDeclError = Error;
-}
-
-void ASTImporter::resetCurrentImportDeclError() {
-  CurrentImportDeclError.reset();
-}
-
-unsigned int ASTImporter::getImportErrorCount(ImportErrorKind Error) const {
-  return ImportDeclErrorCount.lookup(static_cast<int>(Error));
-}
-
-void ASTImporter::incrementImportErrorCount(ImportErrorKind Error) {
-  ImportDeclErrorCount[static_cast<int>(Error)]++;
-}
-
-bool ASTImporter::hasImportErrorCount() const {
-  return ImportDeclErrorCount.size() > 0;
-}
-
-void ASTImporter::resetImportErrorCount() {
-  ImportDeclErrorCount.clear();
-}
+//unsigned int ASTImporter::getImportErrorCount(ImportErrorKind Error) const {
+//  return ImportDeclErrorCount.lookup(static_cast<int>(Error));
+//}
+//
+//void ASTImporter::incrementImportErrorCount(ImportErrorKind Error) {
+//  ImportDeclErrorCount[static_cast<int>(Error)]++;
+//}
+//
+//bool ASTImporter::hasImportErrorCount() const {
+//  return ImportDeclErrorCount.size() > 0;
+//}
+//
+//void ASTImporter::resetImportErrorCount() {
+//  ImportDeclErrorCount.clear();
+//}

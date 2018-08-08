@@ -211,8 +211,8 @@ namespace clang {
     /// AST context into the "to" AST context.
     ///
     /// \returns the equivalent declaration context in the "to"
-    /// context, or a NULL type if an error occurred.
-    DeclContext *ImportContext(DeclContext *FromDC);
+    /// context, or error value.
+    llvm::Expected<DeclContext *> ImportContext(DeclContext *FromDC);
     
     /// \brief Import the given expression from the "from" context into the
     /// "to" context.
@@ -301,9 +301,7 @@ namespace clang {
 
     /// \brief Import the definition of the given declaration, including all of
     /// the declarations it contains.
-    ///
-    /// This routine is intended to be used 
-    void ImportDefinition(Decl *From);
+    llvm::Error ImportDefinition(Decl *From);
 
     /// \brief Cope with a name conflict when importing a declaration into the
     /// given context.

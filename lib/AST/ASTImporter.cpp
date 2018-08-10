@@ -213,8 +213,8 @@ namespace clang {
     QualType VisitObjCInterfaceType(const ObjCInterfaceType *T);
     QualType VisitObjCObjectType(const ObjCObjectType *T);
     QualType VisitObjCObjectPointerType(const ObjCObjectPointerType *T);
-                 
-    // Importing declarations                            
+
+    // Importing declarations
     Error ImportDeclParts(
         NamedDecl *D, DeclContext *&DC, DeclContext *&LexicalDC,
         DeclarationName &Name, NamedDecl *&ToD, SourceLocation &Loc);
@@ -235,7 +235,7 @@ namespace clang {
 
     Optional<LambdaCapture> ImportLambdaCapture(const LambdaCapture &From);
 
-                        
+
     /// \brief What we should import from the definition.
     enum ImportDefinitionKind { 
       /// \brief Import the default subset of the definition, which might be
@@ -289,10 +289,11 @@ namespace clang {
       const InContainerTy &Container, TemplateArgumentListInfo &Result);
 
     using TemplateArgsTy = SmallVector<TemplateArgument, 8>;
-    Error ImportFunctionTemplateWithTemplateArgsFromSpecialization(
-        FunctionDecl *FromFD,
-        FunctionTemplateDecl *&ToTemplate,
-        TemplateArgsTy &ToTemplArgs);
+    using FunctionTemplateAndArgsTy =
+        std::tuple<FunctionTemplateDecl *, TemplateArgsTy>;
+    Expected<FunctionTemplateAndArgsTy>
+    ImportFunctionTemplateWithTemplateArgsFromSpecialization(
+        FunctionDecl *FromFD);
 
     Error ImportTemplateInformation(FunctionDecl *FromFD, FunctionDecl *ToFD);
 
@@ -550,27 +551,27 @@ Error ASTNodeImporter::ImportTemplateArgumentListInfo<
       From.LAngleLoc, From.RAngleLoc, From.arguments(), Result);
 }
 
-Error
+Expected<ASTNodeImporter::FunctionTemplateAndArgsTy>
 ASTNodeImporter::ImportFunctionTemplateWithTemplateArgsFromSpecialization(
-    FunctionDecl *FromFD,
-    FunctionTemplateDecl *&ToTemplate,
-    TemplateArgsTy &ToTemplArgs) {
+    FunctionDecl *FromFD) {
   assert(FromFD->getTemplatedKind() ==
       FunctionDecl::TK_FunctionTemplateSpecialization);
 
+  FunctionTemplateAndArgsTy Result;
+
   auto *FTSInfo = FromFD->getTemplateSpecializationInfo();
-  ToTemplate = cast_or_null<FunctionTemplateDecl>(
+  std::get<0>(Result) = cast_or_null<FunctionTemplateDecl>(
       Importer.Import(FTSInfo->getTemplate()));
-  if (!ToTemplate && FTSInfo->getTemplate())
+  if (!std::get<0>(Result) && FTSInfo->getTemplate())
     return make_error<ImportError>();
 
   // Import template arguments.
   auto TemplArgs = FTSInfo->TemplateArguments->asArray();
   if (auto Err = ImportTemplateArguments(TemplArgs.data(), TemplArgs.size(),
-      ToTemplArgs))
-    return Err;
+      std::get<1>(Result)))
+    return std::move(Err);
 
-  return Error::success();
+  return Result;
 }
 
 } // namespace clang
@@ -2633,14 +2634,13 @@ Error ASTNodeImporter::ImportTemplateInformation(
   }
 
   case FunctionDecl::TK_FunctionTemplateSpecialization: {
-    FunctionTemplateDecl *Template;
-    TemplateArgsTy ToTemplArgs;
-    if (auto Err = ImportFunctionTemplateWithTemplateArgsFromSpecialization(
-        FromFD, Template, ToTemplArgs))
-      return Err;
+    auto FunctionAndArgsOrErr =
+        ImportFunctionTemplateWithTemplateArgsFromSpecialization(FromFD);
+    if (!FunctionAndArgsOrErr)
+      return FunctionAndArgsOrErr.takeError();
 
     TemplateArgumentList *ToTAList = TemplateArgumentList::CreateCopy(
-          Importer.getToContext(), ToTemplArgs);
+          Importer.getToContext(), std::get<1>(*FunctionAndArgsOrErr));
 
     auto *FTSInfo = FromFD->getTemplateSpecializationInfo();
     TemplateArgumentListInfo ToTAInfo;
@@ -2654,7 +2654,7 @@ Error ASTNodeImporter::ImportTemplateInformation(
 
     TemplateSpecializationKind TSK = FTSInfo->getTemplateSpecializationKind();
     ToFD->setFunctionTemplateSpecialization(
-        Template, ToTAList, /* InsertPos= */ nullptr,
+        std::get<0>(*FunctionAndArgsOrErr), ToTAList, /* InsertPos= */ nullptr,
         TSK, FromTAArgsAsWritten ? &ToTAInfo : nullptr, POI);
     return Error::success();
   }
@@ -2690,12 +2690,14 @@ Error ASTNodeImporter::ImportTemplateInformation(
 
 Expected<FunctionDecl *>
 ASTNodeImporter::FindFunctionTemplateSpecialization(FunctionDecl *FromFD) {
+  auto FunctionAndArgsOrErr =
+      ImportFunctionTemplateWithTemplateArgsFromSpecialization(FromFD);
+  if (!FunctionAndArgsOrErr)
+    return FunctionAndArgsOrErr.takeError();
+
   FunctionTemplateDecl *Template;
   TemplateArgsTy ToTemplArgs;
-  if (Error Err = ImportFunctionTemplateWithTemplateArgsFromSpecialization(
-      FromFD, Template, ToTemplArgs))
-    return std::move(Err);
-
+  std::tie(Template, ToTemplArgs) = *FunctionAndArgsOrErr;
   void *InsertPos = nullptr;
   auto *FoundSpec = Template->findSpecialization(ToTemplArgs, InsertPos);
   return FoundSpec;

@@ -240,8 +240,8 @@ namespace clang {
     /// context into the "to" context.
     ///
     /// \returns the equivalent nested-name-specifier in the "to"
-    /// context.
-    NestedNameSpecifierLoc Import(NestedNameSpecifierLoc FromNNS);
+    /// context, or error.
+    Expected<NestedNameSpecifierLoc> Import(NestedNameSpecifierLoc FromNNS);
 
     /// \brief Import the goven template name from the "from" context into the
     /// "to" context.
@@ -251,8 +251,7 @@ namespace clang {
     /// the "to" context.
     ///
     /// \returns the equivalent source location in the "to" context, or error.
-    //Expected<SourceLocation> Import(SourceLocation FromLoc);
-    SourceLocation Import(SourceLocation FromLoc);
+    Expected<SourceLocation> Import(SourceLocation FromLoc);
 
     /// \brief Import the given source range from the "from" context into
     /// the "to" context.
@@ -282,14 +281,15 @@ namespace clang {
     /// "to" context.
     ///
     /// \returns the equivalent file ID in the source manager of the "to"
-    /// context.
-    FileID Import(FileID);
+    /// context, or error.
+    Expected<FileID> Import(FileID);
 
     /// \brief Import the given C++ constructor initializer from the "from"
     /// context into the "to" context.
     ///
     /// \returns the equivalent initializer in the "to" context.
     CXXCtorInitializer *Import(CXXCtorInitializer *FromInit);
+    //Expected<CXXCtorInitializer *> Import(CXXCtorInitializer *FromInit);
 
     /// \brief Import the given CXXBaseSpecifier from the "from" context into
     /// the "to" context.

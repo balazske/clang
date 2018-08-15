@@ -245,7 +245,7 @@ namespace clang {
 
     /// \brief Import the goven template name from the "from" context into the
     /// "to" context.
-    TemplateName Import(TemplateName From);
+    Expected<TemplateName> Import(TemplateName From);
     
     /// \brief Import the given source location from the "from" context into
     /// the "to" context.

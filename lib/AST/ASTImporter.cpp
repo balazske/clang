@@ -1038,8 +1038,8 @@ QualType ASTNodeImporter::VisitSubstTemplateTypeParmType(
 
 QualType ASTNodeImporter::VisitTemplateSpecializationType(
                                        const TemplateSpecializationType *T) {
-  TemplateName ToTemplate = Importer.Import(T->getTemplateName());
-  if (ToTemplate.isNull())
+  auto ToTemplateOrErr = Importer.Import(T->getTemplateName());
+  if (!ToTemplateOrErr)
     return QualType();
   
   SmallVector<TemplateArgument, 2> ToTemplateArgs;
@@ -1054,7 +1054,7 @@ QualType ASTNodeImporter::VisitTemplateSpecializationType(
     if (ToCanonType.isNull())
       return QualType();
   }
-  return Importer.getToContext().getTemplateSpecializationType(ToTemplate, 
+  return Importer.getToContext().getTemplateSpecializationType(*ToTemplateOrErr,
                                                                ToTemplateArgs,
                                                                ToCanonType);
 }
@@ -1637,20 +1637,20 @@ ASTNodeImporter::ImportTemplateArgument(const TemplateArgument &From) {
   }
 
   case TemplateArgument::Template: {
-    TemplateName ToTemplate = Importer.Import(From.getAsTemplate());
-    if (ToTemplate.isNull())
-      return make_error<ImportError>();
+    auto ToTemplateOrErr = Importer.Import(From.getAsTemplate());
+    if (!ToTemplateOrErr)
+      return ToTemplateOrErr.takeError();
     
-    return TemplateArgument(ToTemplate);
+    return TemplateArgument(*ToTemplateOrErr);
   }
 
   case TemplateArgument::TemplateExpansion: {
-    TemplateName ToTemplate 
+    auto ToTemplateOrErr 
       = Importer.Import(From.getAsTemplateOrTemplatePattern());
-    if (ToTemplate.isNull())
-      return make_error<ImportError>();
+    if (!ToTemplateOrErr)
+      return ToTemplateOrErr.takeError();
 
-    return TemplateArgument(ToTemplate, From.getNumTemplateExpansions());
+    return TemplateArgument(*ToTemplateOrErr, From.getNumTemplateExpansions());
   }
 
   case TemplateArgument::Expression:
@@ -8565,14 +8565,14 @@ ASTImporter::Import(NestedNameSpecifierLoc FromNNS) {
   return Builder.getWithLocInContext(getToContext());
 }
 
-TemplateName ASTImporter::Import(TemplateName From) {
+Expected<TemplateName> ASTImporter::Import(TemplateName From) {
   switch (From.getKind()) {
   case TemplateName::Template:
     if (TemplateDecl *ToTemplate
                 = cast_or_null<TemplateDecl>(Import(From.getAsTemplateDecl())))
       return TemplateName(ToTemplate);
       
-    return TemplateName();
+    return make_error<ImportError>();
       
   case TemplateName::OverloadedTemplate: {
     OverloadedTemplateStorage *FromStorage = From.getAsOverloadedTemplate();
@@ -8583,7 +8583,7 @@ TemplateName ASTImporter::Import(TemplateName From) {
       if (NamedDecl *To = cast_or_null<NamedDecl>(Import(*I))) 
         ToTemplates.addDecl(To);
       else
-        return TemplateName();
+        return make_error<ImportError>();
     }
     return ToContext.getOverloadedTemplateName(ToTemplates.begin(), 
                                                ToTemplates.end());
@@ -8593,7 +8593,7 @@ TemplateName ASTImporter::Import(TemplateName From) {
     QualifiedTemplateName *QTN = From.getAsQualifiedTemplateName();
     NestedNameSpecifier *Qualifier = Import(QTN->getQualifier());
     if (!Qualifier)
-      return TemplateName();
+      return make_error<ImportError>();
     
     if (TemplateDecl *ToTemplate
         = cast_or_null<TemplateDecl>(Import(From.getAsTemplateDecl())))
@@ -8601,14 +8601,14 @@ TemplateName ASTImporter::Import(TemplateName From) {
                                                 QTN->hasTemplateKeyword(), 
                                                 ToTemplate);
     
-    return TemplateName();
+    return make_error<ImportError>();
   }
   
   case TemplateName::DependentTemplate: {
     DependentTemplateName *DTN = From.getAsDependentTemplateName();
     NestedNameSpecifier *Qualifier = Import(DTN->getQualifier());
     if (!Qualifier)
-      return TemplateName();
+      return make_error<ImportError>();
     
     if (DTN->isIdentifier()) {
       return ToContext.getDependentTemplateName(Qualifier, 
@@ -8624,12 +8624,13 @@ TemplateName ASTImporter::Import(TemplateName From) {
     TemplateTemplateParmDecl *param
       = cast_or_null<TemplateTemplateParmDecl>(Import(subst->getParameter()));
     if (!param)
-      return TemplateName();
+      return make_error<ImportError>();
 
-    TemplateName replacement = Import(subst->getReplacement());
-    if (replacement.isNull()) return TemplateName();
+    auto ReplacementOrError = Import(subst->getReplacement());
+    if (!ReplacementOrError)
+      return ReplacementOrError.takeError();
     
-    return ToContext.getSubstTemplateTemplateParm(param, replacement);
+    return ToContext.getSubstTemplateTemplateParm(param, *ReplacementOrError);
   }
       
   case TemplateName::SubstTemplateTemplateParmPack: {
@@ -8645,7 +8646,7 @@ TemplateName ASTImporter::Import(TemplateName From) {
     auto ArgPackOrErr 
       = Importer.ImportTemplateArgument(SubstPack->getArgumentPack());
     if (!ArgPackOrErr)
-      return TemplateName();
+      return ArgPackOrErr.takeError();
     
     return ToContext.getSubstTemplateTemplateParmPack(Param, *ArgPackOrErr);
   }

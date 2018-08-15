@@ -186,8 +186,7 @@ namespace clang {
     ///
     /// \returns the equivalent type source information in the "to"
     /// context, or error.
-    //Expected<TypeSourceInfo *> Import(TypeSourceInfo *FromTSI);
-    TypeSourceInfo *Import(TypeSourceInfo *FromTSI);
+    Expected<TypeSourceInfo *> Import(TypeSourceInfo *FromTSI);
 
     /// \brief Import the given declaration from the "from" context into the 
     /// "to" context.

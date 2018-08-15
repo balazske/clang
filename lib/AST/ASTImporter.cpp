@@ -522,6 +522,13 @@ namespace clang {
           InContainer.begin(), InContainer.end(), OutContainer.begin());
     }
 
+    template<typename InContainerTy, typename OutContainerTy>
+    Error ImportContainerCheckedNew(
+        const InContainerTy &InContainer, OutContainerTy &OutContainer) {
+      return ImportArrayCheckedNew(
+          InContainer.begin(), InContainer.end(), OutContainer.begin());
+    }
+
     template<typename InContainerTy, typename OIter>
     Error ImportArrayChecked(const InContainerTy &InContainer, OIter Obegin) {
       return ImportArrayChecked(InContainer.begin(), InContainer.end(), Obegin);
@@ -1280,8 +1287,10 @@ ASTNodeImporter::ImportDeclarationNameLoc(
   case DeclarationName::CXXConstructorName:
   case DeclarationName::CXXDestructorName:
   case DeclarationName::CXXConversionFunctionName: {
-    TypeSourceInfo *FromTInfo = From.getNamedTypeInfo();
-    To.setNamedTypeInfo(Importer.Import(FromTInfo));
+    auto ToTInfoOrErr = Importer.Import(From.getNamedTypeInfo());
+    if (!ToTInfoOrErr)
+      return ToTInfoOrErr.takeError();
+    To.setNamedTypeInfo(*ToTInfoOrErr);
     return Error::success();
   }
   }
@@ -1487,13 +1496,17 @@ Error ASTNodeImporter::ImportDefinition(
       if (!RangeOrErr)
         return RangeOrErr.takeError();
 
+      auto TSIOrErr = Importer.Import(Base1.getTypeSourceInfo());
+      if (!TSIOrErr)
+        return TSIOrErr.takeError();
+
       Bases.push_back(
           new (Importer.getToContext()) CXXBaseSpecifier(
               *RangeOrErr,
               Base1.isVirtual(),
               Base1.isBaseOfClass(),
               Base1.getAccessSpecifierAsWritten(),
-              Importer.Import(Base1.getTypeSourceInfo()),
+              *TSIOrErr,
               EllipsisLoc));
     }
     if (!Bases.empty())
@@ -1685,10 +1698,10 @@ ASTNodeImporter::ImportTemplateArgumentLoc(const TemplateArgumentLoc &TALoc) {
       return make_error<ImportError>();
     ToInfo = TemplateArgumentLocInfo(E);
   } else if (Arg.getKind() == TemplateArgument::Type) {
-    if (TypeSourceInfo *TSI = Importer.Import(FromInfo.getAsTypeSourceInfo()))
-      ToInfo = TemplateArgumentLocInfo(TSI);
+    if (auto TSIOrErr = Importer.Import(FromInfo.getAsTypeSourceInfo()))
+      ToInfo = TemplateArgumentLocInfo(*TSIOrErr);
     else
-      return make_error<ImportError>();
+      return TSIOrErr.takeError();
   } else {
     auto ToTemplateQualifierLocOrErr =
       Importer.Import(FromInfo.getTemplateQualifierLoc());
@@ -2135,21 +2148,24 @@ Decl *ASTNodeImporter::VisitTypedefNameDecl(TypedefNameDecl *D, bool IsAlias) {
   if (T.isNull())
     return nullptr;
 
-  // Create the new typedef node.
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
+    return nullptr;
+
   auto StartLOrErr = Importer.Import(D->getLocStart());
   if (!StartLOrErr)
     return nullptr;
 
+  // Create the new typedef node.
   TypedefNameDecl *ToTypedef;
   if (IsAlias) {
     if (GetImportedOrCreateDecl<TypeAliasDecl>(
             ToTypedef, D, Importer.getToContext(), DC, *StartLOrErr, Loc,
-            Name.getAsIdentifierInfo(), TInfo))
+            Name.getAsIdentifierInfo(), *TInfoOrErr))
       return ToTypedef;
   } else if (GetImportedOrCreateDecl<TypedefDecl>(
                  ToTypedef, D, Importer.getToContext(), DC, *StartLOrErr, Loc,
-                 Name.getAsIdentifierInfo(), TInfo))
+                 Name.getAsIdentifierInfo(), *TInfoOrErr))
     return ToTypedef;
 
   ToTypedef->setAccess(D->getAccess());
@@ -2537,10 +2553,12 @@ Decl *ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
     CXXRecordDecl *D2CXX = nullptr;
     if (CXXRecordDecl *DCXX = llvm::dyn_cast<CXXRecordDecl>(D)) {
       if (DCXX->isLambda()) {
-        TypeSourceInfo *TInfo = Importer.Import(DCXX->getLambdaTypeInfo());
+        auto TInfoOrErr = Importer.Import(DCXX->getLambdaTypeInfo());
+        if (!TInfoOrErr)
+          return nullptr;
         if (GetImportedOrCreateSpecialDecl(
                 D2CXX, CXXRecordDecl::CreateLambda, D, Importer.getToContext(),
-                DC, TInfo, Loc, DCXX->isDependentLambda(),
+                DC, *TInfoOrErr, Loc, DCXX->isDependentLambda(),
                 DCXX->isGenericLambda(), DCXX->getLambdaCaptureDefault()))
           return D2CXX;
         Decl *CDecl = Importer.Import(DCXX->getLambdaContextDecl());
@@ -2951,9 +2969,10 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
     Parameters.push_back(ToP);
   }
 
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
-  if (D->getTypeSourceInfo() && !TInfo)
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
     return nullptr;
+  TypeSourceInfo *TInfo = *TInfoOrErr;
 
   // Create the imported function.
   FunctionDecl *ToFunction = nullptr;
@@ -2963,22 +2982,16 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   if (CXXConstructorDecl *FromConstructor = dyn_cast<CXXConstructorDecl>(D)) {
     if (GetImportedOrCreateDecl<CXXConstructorDecl>(
         ToFunction, D, Importer.getToContext(), cast<CXXRecordDecl>(DC),
-        *InnerLocStartOrErr, NameInfo, T, TInfo, FromConstructor->isExplicit(),
+        *InnerLocStartOrErr, NameInfo, T, TInfo,
+        FromConstructor->isExplicit(),
         D->isInlineSpecified(), D->isImplicit(), D->isConstexpr()))
       return ToFunction;
     if (unsigned NumInitializers = FromConstructor->getNumCtorInitializers()) {
       SmallVector<CXXCtorInitializer *, 4> CtorInitializers(NumInitializers);
-      if (Error Err = ImportArrayCheckedNew(
-          FromConstructor->inits().begin(), FromConstructor->inits().end(),
-          CtorInitializers.begin()))
+      // Import first, then allocate memory and copy if there was no error.
+      if (Error Err = ImportContainerCheckedNew(
+          FromConstructor->inits(), CtorInitializers))
         return nullptr;
-      /*for (CXXCtorInitializer *I : FromConstructor->inits()) {
-        CXXCtorInitializer *ToI =
-            cast_or_null<CXXCtorInitializer>(Importer.Import(I));
-        if (!ToI && I)
-          return nullptr;
-        CtorInitializers.push_back(ToI);
-      }*/
       CXXCtorInitializer **Memory =
           new (Importer.getToContext()) CXXCtorInitializer *[NumInitializers];
       std::copy(CtorInitializers.begin(), CtorInitializers.end(), Memory);
@@ -3198,7 +3211,10 @@ Decl *ASTNodeImporter::VisitFieldDecl(FieldDecl *D) {
   if (T.isNull())
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
+    return nullptr;
+
   Expr *BitWidth = Importer.Import(D->getBitWidth());
   if (!BitWidth && D->getBitWidth())
     return nullptr;
@@ -3210,8 +3226,9 @@ Decl *ASTNodeImporter::VisitFieldDecl(FieldDecl *D) {
   FieldDecl *ToField;
   if (GetImportedOrCreateDecl(ToField, D, Importer.getToContext(), DC,
                               *InnerLocStartOrErr, Loc,
-                              Name.getAsIdentifierInfo(), T, TInfo, BitWidth,
-                              D->isMutable(), D->getInClassInitStyle()))
+                              Name.getAsIdentifierInfo(), T, *TInfoOrErr,
+                              BitWidth, D->isMutable(),
+                              D->getInClassInitStyle()))
     return ToField;
 
   ToField->setAccess(D->getAccess());
@@ -3342,8 +3359,9 @@ Decl *ASTNodeImporter::VisitFriendDecl(FriendDecl *D) {
 
     ToFU = ToFriendD;
   } else {
-    ToFU = Importer.Import(D->getFriendType());
-    if (!ToFU)
+    if (auto TSIOrErr = Importer.Import(D->getFriendType()))
+      ToFU = *TSIOrErr;
+    else
       return nullptr;
   }
 
@@ -3413,7 +3431,10 @@ Decl *ASTNodeImporter::VisitObjCIvarDecl(ObjCIvarDecl *D) {
   if (T.isNull())
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
+    return nullptr;
+
   Expr *BitWidth = Importer.Import(D->getBitWidth());
   if (!BitWidth && D->getBitWidth())
     return nullptr;
@@ -3425,9 +3446,8 @@ Decl *ASTNodeImporter::VisitObjCIvarDecl(ObjCIvarDecl *D) {
   ObjCIvarDecl *ToIvar;
   if (GetImportedOrCreateDecl(
           ToIvar, D, Importer.getToContext(), cast<ObjCContainerDecl>(DC),
-          *InnerLocStartOrErr, Loc,
-          Name.getAsIdentifierInfo(), T, TInfo, D->getAccessControl(), BitWidth,
-          D->getSynthesize()))
+          *InnerLocStartOrErr, Loc, Name.getAsIdentifierInfo(), T, *TInfoOrErr,
+          D->getAccessControl(),BitWidth, D->getSynthesize()))
     return ToIvar;
 
   ToIvar->setLexicalDeclContext(LexicalDC);
@@ -3552,7 +3572,9 @@ Decl *ASTNodeImporter::VisitVarDecl(VarDecl *D) {
   if (T.isNull())
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
+    return nullptr;
 
   auto InnerLocStartOrErr = Importer.Import(D->getInnerLocStart());
   if (!InnerLocStartOrErr)
@@ -3562,7 +3584,7 @@ Decl *ASTNodeImporter::VisitVarDecl(VarDecl *D) {
   VarDecl *ToVar;
   if (GetImportedOrCreateDecl(ToVar, D, Importer.getToContext(), DC,
                               *InnerLocStartOrErr, Loc,
-                              Name.getAsIdentifierInfo(), T, TInfo,
+                              Name.getAsIdentifierInfo(), T, *TInfoOrErr,
                               D->getStorageClass()))
     return ToVar;
 
@@ -3643,12 +3665,14 @@ Decl *ASTNodeImporter::VisitParmVarDecl(ParmVarDecl *D) {
     return nullptr;
 
   // Create the imported parameter.
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
+    return nullptr;
   ParmVarDecl *ToParm;
   if (GetImportedOrCreateDecl(ToParm, D, Importer.getToContext(), DC,
                               *InnerLocStartOrErr, *LocationOrErr,
-                              (*NameOrErr).getAsIdentifierInfo(), T, TInfo,
-                              D->getStorageClass(),
+                              (*NameOrErr).getAsIdentifierInfo(), T,
+                              *TInfoOrErr, D->getStorageClass(),
                               /*DefaultArg*/ nullptr))
     return ToParm;
 
@@ -3773,13 +3797,15 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
   if (ResultTy.isNull())
     return nullptr;
 
-  TypeSourceInfo *ReturnTInfo = Importer.Import(D->getReturnTypeSourceInfo());
+  auto ReturnTInfoOrErr = Importer.Import(D->getReturnTypeSourceInfo());
+  if (!ReturnTInfoOrErr)
+    return nullptr;
 
   ObjCMethodDecl *ToMethod;
   if (GetImportedOrCreateDecl(
           ToMethod, D, Importer.getToContext(), Loc,
           *LocEndOrErr, Name.getObjCSelector(), ResultTy,
-          ReturnTInfo, DC, D->isInstanceMethod(), D->isVariadic(),
+          *ReturnTInfoOrErr, DC, D->isInstanceMethod(), D->isVariadic(),
           D->isPropertyAccessor(), D->isImplicit(), D->isDefined(),
           D->getImplementationControl(), D->hasRelatedResultType()))
     return ToMethod;
@@ -3842,8 +3868,8 @@ Decl *ASTNodeImporter::VisitObjCTypeParamDecl(ObjCTypeParamDecl *D) {
   if (!ColonLocOrErr)
     return nullptr;
 
-  TypeSourceInfo *BoundInfo = Importer.Import(D->getTypeSourceInfo());
-  if (!BoundInfo)
+  auto BoundInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!BoundInfoOrErr)
     return nullptr;
 
   ObjCTypeParamDecl *Result;
@@ -3851,7 +3877,7 @@ Decl *ASTNodeImporter::VisitObjCTypeParamDecl(ObjCTypeParamDecl *D) {
           Result, D, Importer.getToContext(), DC, D->getVariance(),
           *VarianceLocOrErr, D->getIndex(),
           *LocationOrErr, Name.getAsIdentifierInfo(),
-          *ColonLocOrErr, BoundInfo))
+          *ColonLocOrErr, *BoundInfoOrErr))
     return Result;
 
   Result->setLexicalDeclContext(LexicalDC);
@@ -4374,11 +4400,11 @@ Error ASTNodeImporter::ImportDefinition(
   
   // If this class has a superclass, import it.
   if (From->getSuperClass()) {
-    TypeSourceInfo *SuperTInfo = Importer.Import(From->getSuperClassTInfo());
-    if (!SuperTInfo)
-      return make_error<ImportError>();
+    auto SuperTInfoOrErr = Importer.Import(From->getSuperClassTInfo());
+    if (!SuperTInfoOrErr)
+      return SuperTInfoOrErr.takeError();
 
-    To->setSuperClass(SuperTInfo);
+    To->setSuperClass(*SuperTInfoOrErr);
   }
   
   // Import protocols
@@ -4697,8 +4723,8 @@ Decl *ASTNodeImporter::VisitObjCPropertyDecl(ObjCPropertyDecl *D) {
   }
 
   // Import the type.
-  TypeSourceInfo *TSI = Importer.Import(D->getTypeSourceInfo());
-  if (!TSI)
+  auto TSIOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TSIOrErr)
     return nullptr;
 
   auto AtLocOrErr = Importer.Import(D->getAtLoc());
@@ -4715,7 +4741,7 @@ Decl *ASTNodeImporter::VisitObjCPropertyDecl(ObjCPropertyDecl *D) {
           ToProperty, D, Importer.getToContext(), DC, Loc,
           Name.getAsIdentifierInfo(), *AtLocOrErr,
           *LParenLocOrErr, Importer.Import(D->getType()),
-          TSI, D->getPropertyImplementation()))
+          *TSIOrErr, D->getPropertyImplementation()))
     return ToProperty;
 
   ToProperty->setLexicalDeclContext(LexicalDC);
@@ -4877,8 +4903,8 @@ ASTNodeImporter::VisitNonTypeTemplateParmDecl(NonTypeTemplateParmDecl *D) {
     return nullptr;
 
   // Import type-source information.
-  TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
-  if (D->getTypeSourceInfo() && !TInfo)
+  auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+  if (!TInfoOrErr)
     return nullptr;
 
   auto InnerLocStartOrErr = Importer.Import(D->getInnerLocStart());
@@ -4893,7 +4919,7 @@ ASTNodeImporter::VisitNonTypeTemplateParmDecl(NonTypeTemplateParmDecl *D) {
       Importer.getToContext().getTranslationUnitDecl(),
       *InnerLocStartOrErr, *LocationOrErr, D->getDepth(),
       D->getPosition(), (*NameOrErr).getAsIdentifierInfo(), T,
-      D->isParameterPack(), TInfo);
+      D->isParameterPack(), *TInfoOrErr);
   return ToD;
 }
 
@@ -5187,33 +5213,33 @@ Decl *ASTNodeImporter::VisitClassTemplateSpecializationDecl(
     D2->setSpecializationKind(D->getSpecializationKind());
 
     // Import the qualifier, if any.
-    auto QualifierLocOrErr = Importer.Import(D->getQualifierLoc());
-    if (!QualifierLocOrErr)
+    if (auto LocOrErr = Importer.Import(D->getQualifierLoc()))
+      D2->setQualifierInfo(*LocOrErr);
+    else
       return nullptr;
-    D2->setQualifierInfo(*QualifierLocOrErr);
 
     if (auto *TSI = D->getTypeAsWritten()) {
-      TypeSourceInfo *TInfo = Importer.Import(TSI);
-      if (!TInfo)
+      if (auto TInfoOrErr = Importer.Import(TSI))
+        D2->setTypeAsWritten(*TInfoOrErr);
+      else
         return nullptr;
-      D2->setTypeAsWritten(TInfo);
 
-      auto TemplateKeywordLocOrErr =
-          Importer.Import(D->getTemplateKeywordLoc());
-      if (!TemplateKeywordLocOrErr)
+      if (auto LocOrErr = Importer.Import(D->getTemplateKeywordLoc()))
+        D2->setTemplateKeywordLoc(*LocOrErr);
+      else
         return nullptr;
-      D2->setTemplateKeywordLoc(*TemplateKeywordLocOrErr);
 
-      auto ExternLocOrErr = Importer.Import(D->getExternLoc());
-      if (!ExternLocOrErr)
+      if (auto LocOrErr = Importer.Import(D->getExternLoc()))
+        D2->setExternLoc(*LocOrErr);
+      else
         return nullptr;
-      D2->setExternLoc(*ExternLocOrErr);
     }
 
-    auto POIOrErr = Importer.Import(D->getPointOfInstantiation());
-    if (!POIOrErr)
+    if (auto POIOrErr = Importer.Import(D->getPointOfInstantiation()))
+      D2->setPointOfInstantiation(*POIOrErr);
+    else
       return nullptr;
-    D2->setPointOfInstantiation(*POIOrErr);
+    
 
     D2->setTemplateSpecializationKind(D->getTemplateSpecializationKind());
 
@@ -5390,8 +5416,8 @@ Decl *ASTNodeImporter::VisitVarTemplateSpecializationDecl(
     if (T.isNull())
       return nullptr;
 
-    TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
-    if (D->getTypeSourceInfo() && !TInfo)
+    auto TInfoOrErr = Importer.Import(D->getTypeSourceInfo());
+    if (!TInfoOrErr)
       return nullptr;
 
     TemplateArgumentListInfo ToTAInfo;
@@ -5416,8 +5442,8 @@ Decl *ASTNodeImporter::VisitVarTemplateSpecializationDecl(
       PartVarSpecDecl *ToPartial;
       if (GetImportedOrCreateDecl(ToPartial, D, Importer.getToContext(), DC,
                                   *LocStartOrErr, *IdLocOrErr, *ToTPListOrErr,
-                                  VarTemplate, T, TInfo, D->getStorageClass(),
-                                  TemplateArgs, ArgInfos))
+                                  VarTemplate, T, *TInfoOrErr,
+                                  D->getStorageClass(), TemplateArgs, ArgInfos))
         return ToPartial;
 
       auto *FromInst = FromPartial->getInstantiatedFromMember();
@@ -5434,15 +5460,15 @@ Decl *ASTNodeImporter::VisitVarTemplateSpecializationDecl(
     } else { // Full specialization
       if (GetImportedOrCreateDecl(D2, D, Importer.getToContext(), DC,
                                   *LocStartOrErr, *IdLocOrErr, VarTemplate,
-                                  T, TInfo,
+                                  T, *TInfoOrErr,
                                   D->getStorageClass(), TemplateArgs))
         return D2;
     }
 
-    auto POIOrErr = Importer.Import(D->getPointOfInstantiation());
-    if (!POIOrErr)
+    if (auto POIOrErr = Importer.Import(D->getPointOfInstantiation()))
+      D2->setPointOfInstantiation(*POIOrErr);
+    else
       return nullptr;
-    D2->setPointOfInstantiation(*POIOrErr);
 
     D2->setSpecializationKind(D->getSpecializationKind());
     D2->setTemplateArgsInfo(ToTAInfo);
@@ -5451,10 +5477,10 @@ Decl *ASTNodeImporter::VisitVarTemplateSpecializationDecl(
     VarTemplate->AddSpecialization(D2, InsertPos);
 
     // Import the qualifier, if any.
-    auto QualifierLocOrErr = Importer.Import(D->getQualifierLoc());
-    if (!QualifierLocOrErr)
+    if (auto LocOrErr = Importer.Import(D->getQualifierLoc()))
+      D2->setQualifierInfo(*LocOrErr);
+    else
       return nullptr;
-    D2->setQualifierInfo(*QualifierLocOrErr);
 
     if (D->isConstexpr())
       D2->setConstexpr(true);
@@ -6208,12 +6234,12 @@ Expr *ASTNodeImporter::VisitVAArgExpr(VAArgExpr *E) {
   if (!SubExpr && E->getSubExpr())
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(E->getWrittenTypeInfo());
-  if (!TInfo)
+  auto TInfoOrErr = Importer.Import(E->getWrittenTypeInfo());
+  if (!TInfoOrErr)
     return nullptr;
 
   return new (Importer.getToContext()) VAArgExpr(
-        *ToBuiltinLocOrErr, SubExpr, TInfo,
+        *ToBuiltinLocOrErr, SubExpr, *TInfoOrErr,
         *ToRParenLocOrErr, T, E->isMicrosoftABI());
 }
 
@@ -6468,8 +6494,8 @@ Expr *ASTNodeImporter::VisitCompoundLiteralExpr(CompoundLiteralExpr *E) {
   if (T.isNull())
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(E->getTypeSourceInfo());
-  if (!TInfo)
+  auto TInfoOrErr = Importer.Import(E->getTypeSourceInfo());
+  if (!TInfoOrErr)
     return nullptr;
 
   Expr *Init = Importer.Import(E->getInitializer());
@@ -6477,7 +6503,7 @@ Expr *ASTNodeImporter::VisitCompoundLiteralExpr(CompoundLiteralExpr *E) {
     return nullptr;
 
   return new (Importer.getToContext()) CompoundLiteralExpr(
-        *LParenLocOrErr, TInfo, T, E->getValueKind(),
+        *LParenLocOrErr, *TInfoOrErr, T, E->getValueKind(),
         Init, E->isFileScope());
 }
 
@@ -6615,12 +6641,12 @@ ASTNodeImporter::VisitUnaryExprOrTypeTraitExpr(UnaryExprOrTypeTraitExpr *E) {
     return nullptr;
 
   if (E->isArgumentType()) {
-    TypeSourceInfo *TInfo = Importer.Import(E->getArgumentTypeInfo());
-    if (!TInfo)
+    auto TInfoOrErr = Importer.Import(E->getArgumentTypeInfo());
+    if (!TInfoOrErr)
       return nullptr;
 
     return new (Importer.getToContext()) UnaryExprOrTypeTraitExpr(E->getKind(),
-                                           TInfo, ResultType,
+                                           *TInfoOrErr, ResultType,
                                            *OperatorLocOrErr, *RParenLocOrErr);
   }
   
@@ -6739,8 +6765,8 @@ Expr *ASTNodeImporter::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
   if (!LocStartOrErr)
     return nullptr;
 
-  TypeSourceInfo *ToQueried = Importer.Import(E->getQueriedTypeSourceInfo());
-  if (!ToQueried)
+  auto ToQueriedOrErr = Importer.Import(E->getQueriedTypeSourceInfo());
+  if (!ToQueriedOrErr)
     return nullptr;
 
   Expr *Dim = Importer.Import(E->getDimensionExpression());
@@ -6752,7 +6778,7 @@ Expr *ASTNodeImporter::VisitArrayTypeTraitExpr(ArrayTypeTraitExpr *E) {
     return nullptr;
 
   return new (Importer.getToContext()) ArrayTypeTraitExpr(
-        *LocStartOrErr, E->getTrait(), ToQueried,
+        *LocStartOrErr, E->getTrait(), *ToQueriedOrErr,
         E->getValue(), Dim, *LocEndOrErr, T);
 }
 
@@ -6889,8 +6915,8 @@ Expr *ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
   if (!SubExpr)
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(E->getTypeInfoAsWritten());
-  if (!TInfo && E->getTypeInfoAsWritten())
+  auto TInfoOrErr = Importer.Import(E->getTypeInfoAsWritten());
+  if (!TInfoOrErr)
     return nullptr;
 
   CXXCastPath BasePath;
@@ -6908,7 +6934,7 @@ Expr *ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
       return nullptr;
     return CStyleCastExpr::Create(Importer.getToContext(), T,
                                   E->getValueKind(), E->getCastKind(),
-                                  SubExpr, &BasePath, TInfo,
+                                  SubExpr, &BasePath, *TInfoOrErr,
                                   *LParenLocOrErr,
                                   *RParenLocOrErr);
   }
@@ -6922,7 +6948,7 @@ Expr *ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
     if (!RParenLocOrErr)
       return nullptr;
     return CXXFunctionalCastExpr::Create(Importer.getToContext(), T,
-                                         E->getValueKind(), TInfo,
+                                         E->getValueKind(), *TInfoOrErr,
                                          E->getCastKind(), SubExpr, &BasePath,
                                          *LParenLocOrErr,
                                          *RParenLocOrErr);
@@ -6939,7 +6965,7 @@ Expr *ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
     return new (Importer.getToContext()) ObjCBridgedCastExpr(
           *LParenLocOrErr, OCE->getBridgeKind(),
           E->getCastKind(), *BridgeKeywordLocOrErr,
-          TInfo, SubExpr);
+          *TInfoOrErr, SubExpr);
   }
   default:
     break; // just fall through
@@ -6961,27 +6987,27 @@ Expr *ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
   case Stmt::CXXStaticCastExprClass:
     return CXXStaticCastExpr::Create(Importer.getToContext(), T,
                                      E->getValueKind(), E->getCastKind(),
-                                     SubExpr, &BasePath, TInfo,
+                                     SubExpr, &BasePath, *TInfoOrErr,
                                      *OperatorLocOrErr, *RParenLocOrErr,
                                      *BracketsOrErr);
 
   case Stmt::CXXDynamicCastExprClass:
     return CXXDynamicCastExpr::Create(Importer.getToContext(), T,
                                       E->getValueKind(), E->getCastKind(),
-                                      SubExpr, &BasePath, TInfo,
+                                      SubExpr, &BasePath, *TInfoOrErr,
                                       *OperatorLocOrErr, *RParenLocOrErr,
                                       *BracketsOrErr);
 
   case Stmt::CXXReinterpretCastExprClass:
     return CXXReinterpretCastExpr::Create(Importer.getToContext(), T,
                                           E->getValueKind(), E->getCastKind(),
-                                          SubExpr, &BasePath, TInfo,
+                                          SubExpr, &BasePath, *TInfoOrErr,
                                           *OperatorLocOrErr, *RParenLocOrErr,
                                           *BracketsOrErr);
 
   case Stmt::CXXConstCastExprClass:
     return CXXConstCastExpr::Create(Importer.getToContext(), T,
-                                    E->getValueKind(), SubExpr, TInfo,
+                                    E->getValueKind(), SubExpr, *TInfoOrErr,
                                     *OperatorLocOrErr, *RParenLocOrErr,
                                     *BracketsOrErr);
   default:
@@ -7047,8 +7073,8 @@ Expr *ASTNodeImporter::VisitOffsetOfExpr(OffsetOfExpr *OE) {
     Exprs[I] = ToIndexExpr;
   }
 
-  TypeSourceInfo *TInfo = Importer.Import(OE->getTypeSourceInfo());
-  if (!TInfo && OE->getTypeSourceInfo())
+  auto TInfoOrErr = Importer.Import(OE->getTypeSourceInfo());
+  if (!TInfoOrErr)
     return nullptr;
 
   auto OperatorLocOrErr = Importer.Import(OE->getOperatorLoc());
@@ -7061,7 +7087,7 @@ Expr *ASTNodeImporter::VisitOffsetOfExpr(OffsetOfExpr *OE) {
 
   return OffsetOfExpr::Create(Importer.getToContext(), T,
                               *OperatorLocOrErr,
-                              TInfo, Nodes, Exprs,
+                              *TInfoOrErr, Nodes, Exprs,
                               *RParenLocOrErr);
 }
 
@@ -7128,8 +7154,8 @@ Expr *ASTNodeImporter::VisitCXXScalarValueInitExpr(CXXScalarValueInitExpr *E) {
   if (T.isNull())
     return nullptr;
 
-  TypeSourceInfo *TypeInfo = Importer.Import(E->getTypeSourceInfo());
-  if (!TypeInfo)
+  auto TypeInfoOrErr = Importer.Import(E->getTypeSourceInfo());
+  if (!TypeInfoOrErr)
     return nullptr;
 
   auto RParenLocOrErr = Importer.Import(E->getRParenLoc());
@@ -7137,7 +7163,7 @@ Expr *ASTNodeImporter::VisitCXXScalarValueInitExpr(CXXScalarValueInitExpr *E) {
     return nullptr;
 
   return new (Importer.getToContext()) CXXScalarValueInitExpr(
-        T, TypeInfo, *RParenLocOrErr);
+        T, *TypeInfoOrErr, *RParenLocOrErr);
 }
 
 Expr *ASTNodeImporter::VisitCXXBindTemporaryExpr(CXXBindTemporaryExpr *E) {
@@ -7162,8 +7188,8 @@ Expr *ASTNodeImporter::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *CE) {
     return nullptr;
 
 
-  TypeSourceInfo *TInfo = Importer.Import(CE->getTypeSourceInfo());
-  if (!TInfo)
+  auto TInfoOrErr = Importer.Import(CE->getTypeSourceInfo());
+  if (!TInfoOrErr)
     return nullptr;
 
   SmallVector<Expr *, 8> Args(CE->getNumArgs());
@@ -7181,7 +7207,7 @@ Expr *ASTNodeImporter::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *CE) {
     return nullptr;
 
   return new (Importer.getToContext()) CXXTemporaryObjectExpr(
-      Importer.getToContext(), Ctor, T, TInfo, Args,
+      Importer.getToContext(), Ctor, T, *TInfoOrErr, Args,
       *ToParenOrBraceRangeOrErr, CE->hadMultipleCandidates(),
       CE->isListInitialization(), CE->isStdInitListInitialization(),
       CE->requiresZeroInitialization());
@@ -7286,8 +7312,8 @@ Expr *ASTNodeImporter::VisitCXXNewExpr(CXXNewExpr *CE) {
   if (!ToInit && CE->getInitializer())
     return nullptr;
 
-  TypeSourceInfo *TInfo = Importer.Import(CE->getAllocatedTypeSourceInfo());
-  if (!TInfo)
+  auto TInfoOrErr = Importer.Import(CE->getAllocatedTypeSourceInfo());
+  if (!TInfoOrErr)
     return nullptr;
 
   Expr *ToArrSize = Importer.Import(CE->getArraySize());
@@ -7317,7 +7343,7 @@ Expr *ASTNodeImporter::VisitCXXNewExpr(CXXNewExpr *CE) {
         CE->doesUsualArrayDeleteWantSize(),
         PlacementArgs,
         *ToTypeIdParensOrErr,
-        ToArrSize, CE->getInitializationStyle(), ToInit, T, TInfo,
+        ToArrSize, CE->getInitializationStyle(), ToInit, T, *TInfoOrErr,
         *ToSourceRangeOrErr,
         *ToDirectInitRangeOrErr);
 }
@@ -7634,8 +7660,8 @@ Expr *ASTNodeImporter::VisitCXXPseudoDestructorExpr(
   if (!BaseE)
     return nullptr;
 
-  TypeSourceInfo *ScopeInfo = Importer.Import(E->getScopeTypeInfo());
-  if (!ScopeInfo && E->getScopeTypeInfo())
+  auto ScopeInfoOrErr = Importer.Import(E->getScopeTypeInfo());
+  if (!ScopeInfoOrErr)
     return nullptr;
 
   PseudoDestructorTypeStorage Storage;
@@ -7648,10 +7674,10 @@ Expr *ASTNodeImporter::VisitCXXPseudoDestructorExpr(
       return nullptr;
     Storage = PseudoDestructorTypeStorage(ToII, *DestroyedTypeLocOrErr);
   } else {
-    TypeSourceInfo *TI = Importer.Import(E->getDestroyedTypeInfo());
-    if (!TI)
+    if (auto TIOrErr = Importer.Import(E->getDestroyedTypeInfo()))
+      Storage = PseudoDestructorTypeStorage(*TIOrErr);
+    else
       return nullptr;
-    Storage = PseudoDestructorTypeStorage(TI);
   }
 
   auto OperatorLocOrErr = Importer.Import(E->getOperatorLoc());
@@ -7672,8 +7698,8 @@ Expr *ASTNodeImporter::VisitCXXPseudoDestructorExpr(
 
   return new (Importer.getToContext()) CXXPseudoDestructorExpr(
         Importer.getToContext(), BaseE, E->isArrow(), *OperatorLocOrErr,
-        *QualifierLocOrErr, ScopeInfo, *ColonColonLocOrErr, *TildeLocOrErr,
-        Storage);
+        *QualifierLocOrErr, *ScopeInfoOrErr, *ColonColonLocOrErr,
+        *TildeLocOrErr, Storage);
 }
 
 Expr *ASTNodeImporter::VisitCXXDependentScopeMemberExpr(
@@ -7753,8 +7779,12 @@ Expr *ASTNodeImporter::VisitCXXUnresolvedConstructExpr(
   if (!RParenLocOrErr)
     return nullptr;
 
+  auto TSIOrErr = Importer.Import(CE->getTypeSourceInfo());
+  if (!TSIOrErr)
+    return nullptr;
+
   return CXXUnresolvedConstructExpr::Create(
-      Importer.getToContext(), Importer.Import(CE->getTypeSourceInfo()),
+      Importer.getToContext(), *TSIOrErr,
       *LParenLocOrErr, llvm::makeArrayRef(ToArgs), *RParenLocOrErr);
 }
 
@@ -8065,7 +8095,9 @@ Expr *ASTNodeImporter::VisitCXXNamedCastExpr(CXXNamedCastExpr *E) {
   CXXCastPath BasePath;
   if (ImportCastPath(E, BasePath))
     return nullptr;
-  TypeSourceInfo *ToWritten = Importer.Import(E->getTypeInfoAsWritten());
+  auto ToWrittenOrErr = Importer.Import(E->getTypeInfoAsWritten());
+  if (!ToWrittenOrErr)
+    return nullptr;
   auto ToOperatorLocOrErr = Importer.Import(E->getOperatorLoc());
   if (!ToOperatorLocOrErr)
     return nullptr;
@@ -8080,22 +8112,22 @@ Expr *ASTNodeImporter::VisitCXXNamedCastExpr(CXXNamedCastExpr *E) {
   if (isa<CXXStaticCastExpr>(E)) {
     return CXXStaticCastExpr::Create(
         Importer.getToContext(), ToType, VK, CK, ToOp, &BasePath,
-        ToWritten, *ToOperatorLocOrErr, *ToRParenLocOrErr,
+        *ToWrittenOrErr, *ToOperatorLocOrErr, *ToRParenLocOrErr,
         *ToAngleBracketsOrErr);
   } else if (isa<CXXDynamicCastExpr>(E)) {
     return CXXDynamicCastExpr::Create(
         Importer.getToContext(), ToType, VK, CK, ToOp, &BasePath,
-        ToWritten, *ToOperatorLocOrErr, *ToRParenLocOrErr,
+        *ToWrittenOrErr, *ToOperatorLocOrErr, *ToRParenLocOrErr,
         *ToAngleBracketsOrErr);
   } else if (isa<CXXReinterpretCastExpr>(E)) {
     return CXXReinterpretCastExpr::Create(
         Importer.getToContext(), ToType, VK, CK, ToOp, &BasePath,
-        ToWritten, *ToOperatorLocOrErr, *ToRParenLocOrErr,
+        *ToWrittenOrErr, *ToOperatorLocOrErr, *ToRParenLocOrErr,
         *ToAngleBracketsOrErr);
   } else if (isa<CXXConstCastExpr>(E)) {
     return CXXConstCastExpr::Create(
         Importer.getToContext(), ToType, VK, ToOp,
-        ToWritten, *ToOperatorLocOrErr, *ToRParenLocOrErr,
+        *ToWrittenOrErr, *ToOperatorLocOrErr, *ToRParenLocOrErr,
         *ToAngleBracketsOrErr);
   } else {
     llvm_unreachable("Unknown cast type");
@@ -8136,7 +8168,7 @@ Expr *ASTNodeImporter::VisitTypeTraitExpr(TypeTraitExpr *E) {
     return nullptr;
 
   SmallVector<TypeSourceInfo *, 4> ToArgs(E->getNumArgs());
-  if (ImportContainerChecked(E->getArgs(), ToArgs))
+  if (ImportContainerCheckedNew(E->getArgs(), ToArgs))
     return nullptr;
 
   auto LocEndOrErr = Importer.Import(E->getLocEnd());
@@ -8165,12 +8197,11 @@ Expr *ASTNodeImporter::VisitCXXTypeidExpr(CXXTypeidExpr *E) {
     return nullptr;
 
   if (E->isTypeOperand()) {
-    TypeSourceInfo *TSI = Importer.Import(E->getTypeOperandSourceInfo());
-    if (!TSI)
+    if (auto TSIOrErr = Importer.Import(E->getTypeOperandSourceInfo()))
+      return new (Importer.getToContext())
+          CXXTypeidExpr(ToType, *TSIOrErr, *ToSourceRangeOrErr);
+    else
       return nullptr;
-
-    return new (Importer.getToContext())
-        CXXTypeidExpr(ToType, TSI, *ToSourceRangeOrErr);
   }
 
   Expr *Op = Importer.Import(E->getExprOperand());
@@ -8228,7 +8259,7 @@ QualType ASTImporter::Import(QualType FromT) {
   return ToContext.getQualifiedType(ToT, FromT.getLocalQualifiers());
 }
 
-TypeSourceInfo *ASTImporter::Import(TypeSourceInfo *FromTSI) {
+Expected<TypeSourceInfo *> ASTImporter::Import(TypeSourceInfo *FromTSI) {
   if (!FromTSI)
     return FromTSI;
 
@@ -8236,14 +8267,12 @@ TypeSourceInfo *ASTImporter::Import(TypeSourceInfo *FromTSI) {
   // on the type and a single location. Implement a real version of this.
   QualType T = Import(FromTSI->getType());
   if (T.isNull()) {
-    // Set the error if not set already more specifically.
-    //setCurrentImportDeclError(ImportErrorKind::TypeFailed);
-    return nullptr;
+    return make_error<ImportError>();
   }
 
   auto LocStartOrErr = Import(FromTSI->getTypeLoc().getLocStart());
   if (!LocStartOrErr)
-    return nullptr;
+    return LocStartOrErr.takeError();
 
   return ToContext.getTrivialTypeSourceInfo(T, *LocStartOrErr);
 }
@@ -8749,16 +8778,16 @@ Expected<CXXCtorInitializer *> ASTImporter::Import(CXXCtorInitializer *From) {
     return RParenLocOrErr.takeError();
 
   if (From->isBaseInitializer()) {
-    TypeSourceInfo *ToTInfo = Import(From->getTypeSourceInfo());
-    if (!ToTInfo && From->getTypeSourceInfo())
-      return nullptr;
+    auto ToTInfoOrErr = Import(From->getTypeSourceInfo());
+    if (!ToTInfoOrErr)
+      return ToTInfoOrErr.takeError();
 
     auto EllipsisLocOrErr = Import(From->getEllipsisLoc());
     if (!EllipsisLocOrErr)
       return EllipsisLocOrErr.takeError();
 
     return new (ToContext) CXXCtorInitializer(
-        ToContext, ToTInfo, From->isBaseVirtual(),
+        ToContext, *ToTInfoOrErr, From->isBaseVirtual(),
         *LParenLocOrErr, ToExpr, *RParenLocOrErr, *EllipsisLocOrErr);
   } else if (From->isMemberInitializer()) {
     FieldDecl *ToField =
@@ -8787,12 +8816,12 @@ Expected<CXXCtorInitializer *> ASTImporter::Import(CXXCtorInitializer *From) {
         ToContext, ToIField, *MemberLocOrErr,
         *LParenLocOrErr, ToExpr, *RParenLocOrErr);
   } else if (From->isDelegatingInitializer()) {
-    TypeSourceInfo *ToTInfo = Import(From->getTypeSourceInfo());
-    if (!ToTInfo && From->getTypeSourceInfo())
-      return nullptr;
+    auto ToTInfoOrErr = Import(From->getTypeSourceInfo());
+    if (!ToTInfoOrErr)
+      return ToTInfoOrErr.takeError();
 
     return new (ToContext)
-        CXXCtorInitializer(ToContext, ToTInfo, *LParenLocOrErr,
+        CXXCtorInitializer(ToContext, *ToTInfoOrErr, *LParenLocOrErr,
                            ToExpr, *RParenLocOrErr);
   } else {
     // FIXME: assert ?
@@ -8814,11 +8843,15 @@ Expected<CXXBaseSpecifier *> ASTImporter::Import(const CXXBaseSpecifier *BaseSpe
   if (!EllipsisLocOrErr)
     return EllipsisLocOrErr.takeError();
 
+  auto TSIOrErr = Import(BaseSpec->getTypeSourceInfo());
+  if (!TSIOrErr)
+    return TSIOrErr.takeError();
+
   CXXBaseSpecifier *Imported = new (ToContext) CXXBaseSpecifier(
         *ImportedSourceRangeOrErr,
         BaseSpec->isVirtual(), BaseSpec->isBaseOfClass(),
         BaseSpec->getAccessSpecifierAsWritten(),
-        Import(BaseSpec->getTypeSourceInfo()),
+        *TSIOrErr,
         *EllipsisLocOrErr);
   ImportedCXXBaseSpecifiers[BaseSpec] = Imported;
   return Imported;

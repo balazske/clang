@@ -162,7 +162,7 @@ namespace clang {
     /// \param From Object to import.
     /// \return Error information (success or error).
     template <typename ImportT>
-    llvm::Error ImportOrError(ImportT &To, const ImportT &From) {
+    LLVM_NODISCARD llvm::Error importInto(ImportT &To, const ImportT &From) {
       auto ToOrErr = Import(From);
       auto Err = ToOrErr.takeError();
       if (!Err)
@@ -233,8 +233,7 @@ namespace clang {
     ///
     /// \returns the equivalent nested-name-specifier in the "to"
     /// context, or error.
-    //Expected<NestedNameSpecifier *> Import(NestedNameSpecifier *FromNNS);
-    NestedNameSpecifier *Import(NestedNameSpecifier *FromNNS);
+    Expected<NestedNameSpecifier *> Import(NestedNameSpecifier *FromNNS);
 
     /// \brief Import the given nested-name-specifier from the "from"
     /// context into the "to" context.
@@ -287,17 +286,15 @@ namespace clang {
     /// \brief Import the given C++ constructor initializer from the "from"
     /// context into the "to" context.
     ///
-    /// \returns the equivalent initializer in the "to" context.
-    CXXCtorInitializer *Import(CXXCtorInitializer *FromInit);
-    //Expected<CXXCtorInitializer *> Import(CXXCtorInitializer *FromInit);
+    /// \returns the equivalent initializer in the "to" context, or error.
+    Expected<CXXCtorInitializer *> Import(CXXCtorInitializer *FromInit);
 
     /// \brief Import the given CXXBaseSpecifier from the "from" context into
     /// the "to" context.
     ///
     /// \returns the equivalent CXXBaseSpecifier in the source manager of the
-    /// "to" context.
-    CXXBaseSpecifier *Import(const CXXBaseSpecifier *FromSpec);
-    //Expected<CXXBaseSpecifier *> Import(const CXXBaseSpecifier *FromSpec);
+    /// "to" context, or error.
+    Expected<CXXBaseSpecifier *> Import(const CXXBaseSpecifier *FromSpec);
 
     /// \brief Import the definition of the given declaration, including all of
     /// the declarations it contains.

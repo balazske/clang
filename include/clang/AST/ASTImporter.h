@@ -178,8 +178,7 @@ namespace clang {
     /// context.
     ///
     /// \returns the equivalent type in the "to" context, or error.
-    //Expected<QualType> Import(QualType FromT);
-    QualType Import(QualType FromT);
+    Expected<QualType> Import(QualType FromT);
 
     /// \brief Import the given type source information from the
     /// "from" context into the "to" context.

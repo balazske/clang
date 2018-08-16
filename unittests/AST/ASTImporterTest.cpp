@@ -318,7 +318,7 @@ class ASTImporterTestBase : public ParameterizedTestsFixture {
       return Importer->Import(FromDecl);
     }
 
-    QualType import(ASTUnit *ToAST, QualType FromType) {
+    llvm::Expected<QualType> import(ASTUnit *ToAST, QualType FromType) {
       lazyInitImporter(ToAST);
       return Importer->Import(FromType);
     }
@@ -431,7 +431,8 @@ public:
     return FromTU->import(ToAST.get(), From);
   }
 
-  QualType ImportType(QualType FromType, Decl *TUDecl, Language ToLang) {
+  llvm::Expected<QualType>
+  ImportType(QualType FromType, Decl *TUDecl, Language ToLang) {
     lazyInitToAST(ToLang);
     TU *FromTU = findFromTU(TUDecl);
     return FromTU->import(ToAST.get(), FromType);
@@ -1007,7 +1008,10 @@ TEST_P(ASTImporterTestBase, ImportRecordTypeInFunc) {
   ASSERT_TRUE(FromVar);
   auto ToType =
       ImportType(FromVar->getType().getCanonicalType(), FromVar, Lang_C);
-  EXPECT_FALSE(ToType.isNull());
+  llvm::Error Err = ToType.takeError();
+  EXPECT_TRUE(Err.operator bool());
+  // FIXME: Verify correct error code.
+  handleAllErrors(std::move(Err), [](const ImportError &IErr) {});
 }
 
 TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams) {

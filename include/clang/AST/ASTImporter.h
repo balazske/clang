@@ -265,7 +265,8 @@ namespace clang {
     /// \brief Import the given identifier from the "from" context
     /// into the "to" context.
     ///
-    /// \returns the equivalent identifier in the "to" context.
+    /// \returns the equivalent identifier in the "to" context. Note: It
+    /// returns nullptr only if the FromId was nullptr.
     IdentifierInfo *Import(const IdentifierInfo *FromId);
 
     /// \brief Import the given Objective-C selector from the "from"

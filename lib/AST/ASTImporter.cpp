@@ -33,6 +33,11 @@ namespace clang {
   using llvm::make_error;
   using llvm::Error;
   using llvm::Expected;
+  using ExpectedType = llvm::Expected<QualType>;
+  using ExpectedStmt = llvm::Expected<Stmt *>;
+  using ExpectedExpr = llvm::Expected<Expr *>;
+  using ExpectedDecl = llvm::Expected<Decl *>;
+  using ExpectedSLoc = llvm::Expected<SourceLocation>;
 
   void ImportError::log(raw_ostream &OS) const {
     switch (Error) {
@@ -82,11 +87,9 @@ namespace clang {
       To->setIsUsed();
   }
 
-  using ExpectedType = llvm::Expected<QualType>;
-
   class ASTNodeImporter : public TypeVisitor<ASTNodeImporter, ExpectedType>,
                           public DeclVisitor<ASTNodeImporter, Decl *>,
-                          public StmtVisitor<ASTNodeImporter, Stmt *> {
+                          public StmtVisitor<ASTNodeImporter, ExpectedStmt> {
     ASTImporter &Importer;
 
     // Use this instead of Importer.importInto .
@@ -95,7 +98,46 @@ namespace clang {
       return Importer.importInto(To, From);
     }
 
-    // Wrapper for an overload set.
+    template <typename T>
+    Expected<T *> import(T *From) {
+      auto To = Importer.Import(From);
+      if (!To && From)
+        return make_error<ImportError>();
+      return cast_or_null<T>(To);
+    }
+
+    template <typename T>
+    Expected<T *> import(const T *From) {
+      return import(const_cast<T *>(From));
+    }
+
+    template <typename T>
+    Expected<T> import(const T &From) {
+      return Importer.Import(From);
+    }
+
+    template <class T>
+    Expected<std::tuple<T>>
+    importSeq(const T &From) {
+      Expected<T> ToOrErr = import(From);
+      if (!ToOrErr)
+        return ToOrErr.takeError();
+      return std::make_tuple<T>(std::move(*ToOrErr));
+    }
+
+    template <class T, class ... TArgs>
+    Expected<std::tuple<T, TArgs...>>
+    importSeq(const T &From, const TArgs &...FromArgs) {
+      Expected<std::tuple<T>> ToOrErr = importSeq(From);
+      if (!ToOrErr)
+        return ToOrErr.takeError();
+      Expected<std::tuple<TArgs...>> To1OrErr = importSeq(FromArgs...);
+      if (!To1OrErr)
+        return To1OrErr.takeError();
+      return std::tuple_cat(*ToOrErr, *To1OrErr);
+    }
+ 
+// Wrapper for an overload set.
     template <typename ToDeclT> struct CallOverloadedCreateFun {
       template <typename... Args>
       auto operator()(Args &&... args)
@@ -168,7 +210,7 @@ namespace clang {
     explicit ASTNodeImporter(ASTImporter &Importer) : Importer(Importer) { }
     using TypeVisitor<ASTNodeImporter, ExpectedType>::Visit;
     using DeclVisitor<ASTNodeImporter, Decl *>::Visit;
-    using StmtVisitor<ASTNodeImporter, Stmt *>::Visit;
+    using StmtVisitor<ASTNodeImporter, ExpectedStmt>::Visit;
 
     // Importing types
     ExpectedType VisitType(const Type *T);
@@ -371,44 +413,44 @@ namespace clang {
     Decl *VisitFunctionTemplateDecl(FunctionTemplateDecl *D);
 
     // Importing statements
-    DeclGroupRef ImportDeclGroup(DeclGroupRef DG);
+    Expected<DeclGroupRef> ImportDeclGroup(DeclGroupRef DG);
 
-    Stmt *VisitStmt(Stmt *S);
-    Stmt *VisitGCCAsmStmt(GCCAsmStmt *S);
-    Stmt *VisitDeclStmt(DeclStmt *S);
-    Stmt *VisitNullStmt(NullStmt *S);
-    Stmt *VisitCompoundStmt(CompoundStmt *S);
-    Stmt *VisitCaseStmt(CaseStmt *S);
-    Stmt *VisitDefaultStmt(DefaultStmt *S);
-    Stmt *VisitLabelStmt(LabelStmt *S);
-    Stmt *VisitAttributedStmt(AttributedStmt *S);
-    Stmt *VisitIfStmt(IfStmt *S);
-    Stmt *VisitSwitchStmt(SwitchStmt *S);
-    Stmt *VisitWhileStmt(WhileStmt *S);
-    Stmt *VisitDoStmt(DoStmt *S);
-    Stmt *VisitForStmt(ForStmt *S);
-    Stmt *VisitGotoStmt(GotoStmt *S);
-    Stmt *VisitIndirectGotoStmt(IndirectGotoStmt *S);
-    Stmt *VisitContinueStmt(ContinueStmt *S);
-    Stmt *VisitBreakStmt(BreakStmt *S);
-    Stmt *VisitReturnStmt(ReturnStmt *S);
+    ExpectedStmt VisitStmt(Stmt *S);
+    ExpectedStmt VisitGCCAsmStmt(GCCAsmStmt *S);
+    ExpectedStmt VisitDeclStmt(DeclStmt *S);
+    ExpectedStmt VisitNullStmt(NullStmt *S);
+    ExpectedStmt VisitCompoundStmt(CompoundStmt *S);
+    ExpectedStmt VisitCaseStmt(CaseStmt *S);
+    ExpectedStmt VisitDefaultStmt(DefaultStmt *S);
+    ExpectedStmt VisitLabelStmt(LabelStmt *S);
+    ExpectedStmt VisitAttributedStmt(AttributedStmt *S);
+    ExpectedStmt VisitIfStmt(IfStmt *S);
+    ExpectedStmt VisitSwitchStmt(SwitchStmt *S);
+    ExpectedStmt VisitWhileStmt(WhileStmt *S);
+    ExpectedStmt VisitDoStmt(DoStmt *S);
+    ExpectedStmt VisitForStmt(ForStmt *S);
+    ExpectedStmt VisitGotoStmt(GotoStmt *S);
+    ExpectedStmt VisitIndirectGotoStmt(IndirectGotoStmt *S);
+    ExpectedStmt VisitContinueStmt(ContinueStmt *S);
+    ExpectedStmt VisitBreakStmt(BreakStmt *S);
+    ExpectedStmt VisitReturnStmt(ReturnStmt *S);
     // FIXME: MSAsmStmt
     // FIXME: SEHExceptStmt
     // FIXME: SEHFinallyStmt
     // FIXME: SEHTryStmt
     // FIXME: SEHLeaveStmt
     // FIXME: CapturedStmt
-    Stmt *VisitCXXCatchStmt(CXXCatchStmt *S);
-    Stmt *VisitCXXTryStmt(CXXTryStmt *S);
-    Stmt *VisitCXXForRangeStmt(CXXForRangeStmt *S);
+    ExpectedStmt VisitCXXCatchStmt(CXXCatchStmt *S);
+    ExpectedStmt VisitCXXTryStmt(CXXTryStmt *S);
+    ExpectedStmt VisitCXXForRangeStmt(CXXForRangeStmt *S);
     // FIXME: MSDependentExistsStmt
-    Stmt *VisitObjCForCollectionStmt(ObjCForCollectionStmt *S);
-    Stmt *VisitObjCAtCatchStmt(ObjCAtCatchStmt *S);
-    Stmt *VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S);
-    Stmt *VisitObjCAtTryStmt(ObjCAtTryStmt *S);
-    Stmt *VisitObjCAtSynchronizedStmt(ObjCAtSynchronizedStmt *S);
-    Stmt *VisitObjCAtThrowStmt(ObjCAtThrowStmt *S);
-    Stmt *VisitObjCAutoreleasePoolStmt(ObjCAutoreleasePoolStmt *S);
+    ExpectedStmt VisitObjCForCollectionStmt(ObjCForCollectionStmt *S);
+    ExpectedStmt VisitObjCAtCatchStmt(ObjCAtCatchStmt *S);
+    ExpectedStmt VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S);
+    ExpectedStmt VisitObjCAtTryStmt(ObjCAtTryStmt *S);
+    ExpectedStmt VisitObjCAtSynchronizedStmt(ObjCAtSynchronizedStmt *S);
+    ExpectedStmt VisitObjCAtThrowStmt(ObjCAtThrowStmt *S);
+    ExpectedStmt VisitObjCAutoreleasePoolStmt(ObjCAutoreleasePoolStmt *S);
 
     // Importing expressions
     Expr *VisitExpr(Expr *E);
@@ -540,6 +582,12 @@ namespace clang {
       return ImportArrayChecked(InContainer.begin(), InContainer.end(), Obegin);
     }
 
+    // FIXME: Rename and use this instead of ImportArrayChecked.
+    template<typename InContainerTy, typename OIter>
+    Error ImportArrayCheckedNew(const InContainerTy &InContainer, OIter Obegin) {
+      return ImportArrayCheckedNew(InContainer.begin(), InContainer.end(), Obegin);
+    }
+
     void ImportOverrides(CXXMethodDecl *ToMethod, CXXMethodDecl *FromMethod);
 
     Expected<FunctionDecl *> FindFunctionTemplateSpecialization(
@@ -602,6 +650,189 @@ ASTNodeImporter::ImportFunctionTemplateWithTemplateArgsFromSpecialization(
     return std::move(Err);
 
   return Result;
+}
+
+// FIXME: Remove this if main import template is usable instead.
+template <>
+Expected<TypeSourceInfo *> ASTNodeImporter::import(TypeSourceInfo *From) {
+  return Importer.Import(From);
+}
+// FIXME: Remove this if main import template is usable instead.
+template <>
+Expected<NestedNameSpecifier *> ASTNodeImporter::import(NestedNameSpecifier *From) {
+  return Importer.Import(From);
+}
+// FIXME: Remove this if main import template is usable instead.
+template <>
+Expected<CXXCtorInitializer *> ASTNodeImporter::import(CXXCtorInitializer *From) {
+  return Importer.Import(From);
+}
+// FIXME: Remove this if main import template is usable instead.
+template <>
+Expected<CXXBaseSpecifier *> ASTNodeImporter::import(CXXBaseSpecifier *From) {
+  return Importer.Import(From);
+}
+
+template <>
+Expected<TemplateParameterList *> ASTNodeImporter::import(TemplateParameterList *From) {
+  SmallVector<NamedDecl *, 4> To(From->size());
+  if (Error Err = ImportContainerChecked(*From, To))
+    return std::move(Err);
+
+  ExpectedExpr ToRequiresClause = import(From->getRequiresClause());
+  if (!ToRequiresClause)
+    return ToRequiresClause.takeError();
+
+  auto ToTemplateLocOrErr = import(From->getTemplateLoc());
+  if (!ToTemplateLocOrErr)
+    return ToTemplateLocOrErr.takeError();
+  auto ToLAngleLocOrErr = import(From->getLAngleLoc());
+  if (!ToLAngleLocOrErr)
+    return ToLAngleLocOrErr.takeError();
+  auto ToRAngleLocOrErr = import(From->getRAngleLoc());
+  if (!ToRAngleLocOrErr)
+    return ToRAngleLocOrErr.takeError();
+
+  return TemplateParameterList::Create(
+      Importer.getToContext(),
+      *ToTemplateLocOrErr,
+      *ToLAngleLocOrErr,
+      To,
+      *ToRAngleLocOrErr,
+      *ToRequiresClause);
+}
+
+template <>
+Expected<TemplateArgument> ASTNodeImporter::import(const TemplateArgument &From) {
+  switch (From.getKind()) {
+  case TemplateArgument::Null:
+    return TemplateArgument();
+
+  case TemplateArgument::Type: {
+    ExpectedType ToTypeOrErr = import(From.getAsType());
+    if (!ToTypeOrErr)
+      return ToTypeOrErr.takeError();
+    return TemplateArgument(*ToTypeOrErr);
+  }
+
+  case TemplateArgument::Integral: {
+    ExpectedType ToTypeOrErr = import(From.getIntegralType());
+    if (!ToTypeOrErr)
+      return ToTypeOrErr.takeError();
+    return TemplateArgument(From, *ToTypeOrErr);
+  }
+
+  case TemplateArgument::Declaration: {
+    Expected<ValueDecl *> ToOrErr = import(From.getAsDecl());
+    if (!ToOrErr)
+      return ToOrErr.takeError();
+    ExpectedType ToTypeOrErr = import(From.getParamTypeForDecl());
+    if (!ToTypeOrErr)
+      return ToTypeOrErr.takeError();
+    return TemplateArgument(*ToOrErr, *ToTypeOrErr);
+  }
+
+  case TemplateArgument::NullPtr: {
+    ExpectedType ToTypeOrErr = import(From.getNullPtrType());
+    if (!ToTypeOrErr)
+      return ToTypeOrErr.takeError();
+    return TemplateArgument(*ToTypeOrErr, /*isNullPtr*/true);
+  }
+
+  case TemplateArgument::Template: {
+    Expected<TemplateName> ToTemplateOrErr = import(From.getAsTemplate());
+    if (!ToTemplateOrErr)
+      return ToTemplateOrErr.takeError();
+
+    return TemplateArgument(*ToTemplateOrErr);
+  }
+
+  case TemplateArgument::TemplateExpansion: {
+    Expected<TemplateName> ToTemplateOrErr =
+        import(From.getAsTemplateOrTemplatePattern());
+    if (!ToTemplateOrErr)
+      return ToTemplateOrErr.takeError();
+
+    return TemplateArgument(
+        *ToTemplateOrErr, From.getNumTemplateExpansions());
+  }
+
+  case TemplateArgument::Expression:
+    if (ExpectedExpr ToExpr = import(From.getAsExpr()))
+      return TemplateArgument(*ToExpr);
+    else
+      return ToExpr.takeError();
+
+  case TemplateArgument::Pack: {
+    SmallVector<TemplateArgument, 2> ToPack;
+    ToPack.reserve(From.pack_size());
+    if (Error Err = ImportTemplateArguments(
+        From.pack_begin(), From.pack_size(), ToPack))
+      return std::move(Err);
+
+    return TemplateArgument(
+        llvm::makeArrayRef(ToPack).copy(Importer.getToContext()));
+  }
+  }
+
+  llvm_unreachable("Invalid template argument kind");
+}
+
+template <>
+Expected<TemplateArgumentLoc> ASTNodeImporter::import(const TemplateArgumentLoc &TALoc) {
+  Expected<TemplateArgument> ArgOrErr = import(TALoc.getArgument());
+  if (!ArgOrErr)
+    return ArgOrErr.takeError();
+  TemplateArgument Arg = *ArgOrErr;
+  TemplateArgumentLocInfo FromInfo = TALoc.getLocInfo();
+  TemplateArgumentLocInfo ToInfo;
+  if (Arg.getKind() == TemplateArgument::Expression) {
+    ExpectedExpr E = import(FromInfo.getAsExpr());
+    if (!E)
+      return E.takeError();
+    ToInfo = TemplateArgumentLocInfo(*E);
+  } else if (Arg.getKind() == TemplateArgument::Type) {
+    if (auto TSIOrErr = import(FromInfo.getAsTypeSourceInfo()))
+      ToInfo = TemplateArgumentLocInfo(*TSIOrErr);
+    else
+      return TSIOrErr.takeError();
+  } else {
+    auto ToTemplateQualifierLocOrErr =
+        import(FromInfo.getTemplateQualifierLoc());
+    if (!ToTemplateQualifierLocOrErr)
+      return ToTemplateQualifierLocOrErr.takeError();
+    auto ToTemplateNameLocOrErr = import(FromInfo.getTemplateNameLoc());
+    if (!ToTemplateNameLocOrErr)
+      return ToTemplateNameLocOrErr.takeError();
+    auto ToTemplateEllipsisLocOrErr =
+        import(FromInfo.getTemplateEllipsisLoc());
+    if (!ToTemplateEllipsisLocOrErr)
+      return ToTemplateEllipsisLocOrErr.takeError();
+
+    ToInfo = TemplateArgumentLocInfo(
+          *ToTemplateQualifierLocOrErr,
+          *ToTemplateNameLocOrErr,
+          *ToTemplateEllipsisLocOrErr);
+  }
+  return TemplateArgumentLoc(Arg, ToInfo);
+}
+
+template<>
+Expected<DeclGroupRef> ASTNodeImporter::import(const DeclGroupRef &DG) {
+  if (DG.isNull())
+    return DeclGroupRef::Create(Importer.getToContext(), nullptr, 0);
+  size_t NumDecls = DG.end() - DG.begin();
+  SmallVector<Decl *, 1> ToDecls;
+  ToDecls.reserve(NumDecls);
+  for (Decl *FromD : DG) {
+    if (auto ToDOrErr = import(FromD))
+      ToDecls.push_back(*ToDOrErr);
+    else
+      return ToDOrErr.takeError();
+  }
+  return DeclGroupRef::Create(Importer.getToContext(),
+                              ToDecls.begin(),
+                              NumDecls);
 }
 
 } // namespace clang
@@ -1584,6 +1815,7 @@ Error ASTNodeImporter::ImportDefinition(
   return Error::success();
 }
 
+// FIXME: Remove this, use `import` instead.
 Expected<TemplateParameterList *> ASTNodeImporter::ImportTemplateParameterList(
     TemplateParameterList *Params) {
   SmallVector<NamedDecl *, 4> ToParams(Params->size());
@@ -1619,6 +1851,7 @@ Expected<TemplateParameterList *> ASTNodeImporter::ImportTemplateParameterList(
       ToRequiresClause);
 }
 
+// FIXME: Remove this, use `import` instead.
 Expected<TemplateArgument>
 ASTNodeImporter::ImportTemplateArgument(const TemplateArgument &From) {
   switch (From.getKind()) {
@@ -1691,6 +1924,7 @@ ASTNodeImporter::ImportTemplateArgument(const TemplateArgument &From) {
   llvm_unreachable("Invalid template argument kind");
 }
 
+// FIXME: Remove this, use `import` instead.
 Expected<TemplateArgumentLoc>
 ASTNodeImporter::ImportTemplateArgumentLoc(const TemplateArgumentLoc &TALoc) {
   auto ArgOrErr = ImportTemplateArgument(TALoc.getArgument());
@@ -5582,208 +5816,194 @@ Decl *ASTNodeImporter::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
 // Import Statements
 //----------------------------------------------------------------------------
 
-DeclGroupRef ASTNodeImporter::ImportDeclGroup(DeclGroupRef DG) {
+// FIXME: Remove this, use `import` instead.
+Expected<DeclGroupRef> ASTNodeImporter::ImportDeclGroup(DeclGroupRef DG) {
   if (DG.isNull())
     return DeclGroupRef::Create(Importer.getToContext(), nullptr, 0);
   size_t NumDecls = DG.end() - DG.begin();
-  SmallVector<Decl *, 1> ToDecls(NumDecls);
-  auto &_Importer = this->Importer;
-  std::transform(DG.begin(), DG.end(), ToDecls.begin(),
-    [&_Importer](Decl *D) -> Decl * {
-      return _Importer.Import(D);
-    });
+  SmallVector<Decl *, 1> ToDecls;
+  ToDecls.reserve(NumDecls);
+  for (Decl *FromD : DG) {
+    if (auto ToDOrErr = import(FromD))
+      ToDecls.push_back(*ToDOrErr);
+    else
+      return ToDOrErr.takeError();
+  }
   return DeclGroupRef::Create(Importer.getToContext(),
                               ToDecls.begin(),
                               NumDecls);
 }
 
- Stmt *ASTNodeImporter::VisitStmt(Stmt *S) {
-   assert(false && "Unsupported Stmt at import");
-   return nullptr;
- }
+ExpectedStmt ASTNodeImporter::VisitStmt(Stmt *S) {
+  assert(false && "Unsupported Stmt at import");
+}
 
 
-Stmt *ASTNodeImporter::VisitGCCAsmStmt(GCCAsmStmt *S) {
-  auto AsmLocOrErr = Importer.Import(S->getAsmLoc());
-  if (!AsmLocOrErr)
-    return nullptr;
-
+ExpectedStmt ASTNodeImporter::VisitGCCAsmStmt(GCCAsmStmt *S) {
   SmallVector<IdentifierInfo *, 4> Names;
   for (unsigned I = 0, E = S->getNumOutputs(); I != E; I++) {
     IdentifierInfo *ToII = Importer.Import(S->getOutputIdentifier(I));
     // ToII is nullptr when no symbolic name is given for output operand
     // see ParseStmtAsm::ParseAsmOperandsOpt
-    if (!ToII && S->getOutputIdentifier(I))
-      return nullptr;
     Names.push_back(ToII);
   }
+
   for (unsigned I = 0, E = S->getNumInputs(); I != E; I++) {
     IdentifierInfo *ToII = Importer.Import(S->getInputIdentifier(I));
     // ToII is nullptr when no symbolic name is given for input operand
     // see ParseStmtAsm::ParseAsmOperandsOpt
-    if (!ToII && S->getInputIdentifier(I))
-      return nullptr;
     Names.push_back(ToII);
   }
 
   SmallVector<StringLiteral *, 4> Clobbers;
   for (unsigned I = 0, E = S->getNumClobbers(); I != E; I++) {
-    StringLiteral *Clobber = cast_or_null<StringLiteral>(
-          Importer.Import(S->getClobberStringLiteral(I)));
-    if (!Clobber)
-      return nullptr;
-    Clobbers.push_back(Clobber);
+    if (auto ClobberOrErr = import(S->getClobberStringLiteral(I)))
+      Clobbers.push_back(*ClobberOrErr);
+    else
+      return ClobberOrErr.takeError();
+   
   }
 
   SmallVector<StringLiteral *, 4> Constraints;
   for (unsigned I = 0, E = S->getNumOutputs(); I != E; I++) {
-    StringLiteral *Output = cast_or_null<StringLiteral>(
-          Importer.Import(S->getOutputConstraintLiteral(I)));
-    if (!Output)
-      return nullptr;
-    Constraints.push_back(Output);
+    if (auto OutputOrErr = import(S->getOutputConstraintLiteral(I)))
+      Constraints.push_back(*OutputOrErr);
+    else
+      return OutputOrErr.takeError();
   }
 
   for (unsigned I = 0, E = S->getNumInputs(); I != E; I++) {
-    StringLiteral *Input = cast_or_null<StringLiteral>(
-          Importer.Import(S->getInputConstraintLiteral(I)));
-    if (!Input)
-      return nullptr;
-    Constraints.push_back(Input);
+    if (auto InputOrErr = import(S->getInputConstraintLiteral(I)))
+      Constraints.push_back(*InputOrErr);
+    else
+      return InputOrErr.takeError();
   }
 
   SmallVector<Expr *, 4> Exprs(S->getNumOutputs() + S->getNumInputs());
-  if (ImportContainerChecked(S->outputs(), Exprs))
-    return nullptr;
+  if (Error Err = ImportContainerCheckedNew(S->outputs(), Exprs))
+    return std::move(Err);
 
-  if (ImportArrayChecked(S->inputs(), Exprs.begin() + S->getNumOutputs()))
-    return nullptr;
+  if (Error Err = ImportArrayCheckedNew(
+      S->inputs(), Exprs.begin() + S->getNumOutputs()))
+    return std::move(Err);
 
-  StringLiteral *AsmStr = cast_or_null<StringLiteral>(
-        Importer.Import(S->getAsmString()));
-  if (!AsmStr)
-    return nullptr;
-
-  auto RParenLocOrErr = Importer.Import(S->getRParenLoc());
+  ExpectedSLoc AsmLocOrErr = import(S->getAsmLoc());
+  if (!AsmLocOrErr)
+    return AsmLocOrErr.takeError();
+  auto AsmStrOrErr = import(S->getAsmString());
+  if (!AsmStrOrErr)
+    return AsmStrOrErr.takeError();
+  ExpectedSLoc RParenLocOrErr = import(S->getRParenLoc());
   if (!RParenLocOrErr)
-    return nullptr;
+    return RParenLocOrErr.takeError();
 
   return new (Importer.getToContext()) GCCAsmStmt(
-        Importer.getToContext(),
-        *AsmLocOrErr,
-        S->isSimple(),
-        S->isVolatile(),
-        S->getNumOutputs(),
-        S->getNumInputs(),
-        Names.data(),
-        Constraints.data(),
-        Exprs.data(),
-        AsmStr,
-        S->getNumClobbers(),
-        Clobbers.data(),
-        *RParenLocOrErr);
+      Importer.getToContext(),
+      *AsmLocOrErr,
+      S->isSimple(),
+      S->isVolatile(),
+      S->getNumOutputs(),
+      S->getNumInputs(),
+      Names.data(),
+      Constraints.data(),
+      Exprs.data(),
+      *AsmStrOrErr,
+      S->getNumClobbers(),
+      Clobbers.data(),
+      *RParenLocOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitDeclStmt(DeclStmt *S) {
-  DeclGroupRef ToDG = ImportDeclGroup(S->getDeclGroup());
-  for (Decl *ToD : ToDG) {
-    if (!ToD)
-      return nullptr;
-  }
-  auto ToStartLocOrErr = Importer.Import(S->getStartLoc());
-  if (!ToStartLocOrErr)
-    return nullptr;
-  auto ToEndLocOrErr = Importer.Import(S->getEndLoc());
-  if (!ToEndLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) DeclStmt(
-      ToDG, *ToStartLocOrErr, *ToEndLocOrErr);
+ExpectedStmt ASTNodeImporter::VisitDeclStmt(DeclStmt *S) {
+  auto Imp = importSeq(S->getDeclGroup(), S->getStartLoc(), S->getEndLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  DeclGroupRef ToDG;
+  SourceLocation ToStartLoc, ToEndLoc;
+  std::tie(ToDG, ToStartLoc, ToEndLoc) = *Imp;
+
+  return new (Importer.getToContext()) DeclStmt(ToDG, ToStartLoc, ToEndLoc);
 }
 
-Stmt *ASTNodeImporter::VisitNullStmt(NullStmt *S) {
-  auto ToSemiLocOrErr = Importer.Import(S->getSemiLoc());
+ExpectedStmt ASTNodeImporter::VisitNullStmt(NullStmt *S) {
+  ExpectedSLoc ToSemiLocOrErr = import(S->getSemiLoc());
   if (!ToSemiLocOrErr)
     return nullptr;
-  return new (Importer.getToContext()) NullStmt(*ToSemiLocOrErr,
-                                                S->hasLeadingEmptyMacro());
+  return new (Importer.getToContext()) NullStmt(
+      *ToSemiLocOrErr, S->hasLeadingEmptyMacro());
 }
 
-Stmt *ASTNodeImporter::VisitCompoundStmt(CompoundStmt *S) {
+ExpectedStmt ASTNodeImporter::VisitCompoundStmt(CompoundStmt *S) {
   llvm::SmallVector<Stmt *, 8> ToStmts(S->size());
 
-  if (ImportContainerChecked(S->body(), ToStmts))
-    return nullptr;
+  if (Error Err = ImportContainerCheckedNew(S->body(), ToStmts))
+    return std::move(Err);
 
-  auto ToLBracLocOrErr = Importer.Import(S->getLBracLoc());
+  ExpectedSLoc ToLBracLocOrErr = import(S->getLBracLoc());
   if (!ToLBracLocOrErr)
-    return nullptr;
-  auto ToRBracLocOrErr = Importer.Import(S->getRBracLoc());
+    return ToLBracLocOrErr.takeError();
+
+  ExpectedSLoc ToRBracLocOrErr = import(S->getRBracLoc());
   if (!ToRBracLocOrErr)
-    return nullptr;
-  return CompoundStmt::Create(Importer.getToContext(), ToStmts,
-                              *ToLBracLocOrErr, *ToRBracLocOrErr);
+    return ToRBracLocOrErr.takeError();
+
+  return CompoundStmt::Create(
+      Importer.getToContext(), ToStmts,
+      *ToLBracLocOrErr, *ToRBracLocOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitCaseStmt(CaseStmt *S) {
-  Expr *ToLHS = Importer.Import(S->getLHS());
-  if (!ToLHS)
-    return nullptr;
-  Expr *ToRHS = Importer.Import(S->getRHS());
-  if (!ToRHS && S->getRHS())
-    return nullptr;
-  Stmt *ToSubStmt = Importer.Import(S->getSubStmt());
-  if (!ToSubStmt && S->getSubStmt())
-    return nullptr;
-  auto ToCaseLocOrErr = Importer.Import(S->getCaseLoc());
-  if (!ToCaseLocOrErr)
-    return nullptr;
-  auto ToEllipsisLocOrErr = Importer.Import(S->getEllipsisLoc());
-  if (!ToEllipsisLocOrErr)
-    return nullptr;
-  auto ToColonLocOrErr = Importer.Import(S->getColonLoc());
-  if (!ToColonLocOrErr)
-    return nullptr;
-  CaseStmt *ToStmt = new (Importer.getToContext())
-      CaseStmt(ToLHS, ToRHS,
-               *ToCaseLocOrErr, *ToEllipsisLocOrErr, *ToColonLocOrErr);
+ExpectedStmt ASTNodeImporter::VisitCaseStmt(CaseStmt *S) {
+  auto Imp = importSeq(
+      S->getLHS(), S->getRHS(), S->getSubStmt(), S->getCaseLoc(),
+      S->getEllipsisLoc(), S->getColonLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  Expr *ToLHS, *ToRHS;
+  Stmt *ToSubStmt;
+  SourceLocation ToCaseLoc, ToEllipsisLoc, ToColonLoc;
+  std::tie(ToLHS, ToRHS, ToSubStmt, ToCaseLoc, ToEllipsisLoc, ToColonLoc) =
+      *Imp;
+
+  CaseStmt *ToStmt = new (Importer.getToContext()) CaseStmt(
+      ToLHS, ToRHS, ToCaseLoc, ToEllipsisLoc, ToColonLoc);
   ToStmt->setSubStmt(ToSubStmt);
+
   return ToStmt;
 }
 
-Stmt *ASTNodeImporter::VisitDefaultStmt(DefaultStmt *S) {
-  auto ToDefaultLocOrErr = Importer.Import(S->getDefaultLoc());
-  if (!ToDefaultLocOrErr)
-    return nullptr;
-  auto ToColonLocOrErr = Importer.Import(S->getColonLoc());
-  if (!ToColonLocOrErr)
-    return nullptr;
-  Stmt *ToSubStmt = Importer.Import(S->getSubStmt());
-  if (!ToSubStmt && S->getSubStmt())
-    return nullptr;
-  return new (Importer.getToContext()) DefaultStmt(*ToDefaultLocOrErr,
-                                                   *ToColonLocOrErr,
-                                                   ToSubStmt);
+ExpectedStmt ASTNodeImporter::VisitDefaultStmt(DefaultStmt *S) {
+  auto Imp = importSeq(S->getDefaultLoc(), S->getColonLoc(), S->getSubStmt());
+  if (!Imp)
+    return Imp.takeError();
+  
+  SourceLocation ToDefaultLoc, ToColonLoc;
+  Stmt *ToSubStmt;
+  std::tie(ToDefaultLoc, ToColonLoc, ToSubStmt) = *Imp;
+
+  return new (Importer.getToContext()) DefaultStmt(
+    ToDefaultLoc, ToColonLoc, ToSubStmt);
 }
 
-Stmt *ASTNodeImporter::VisitLabelStmt(LabelStmt *S) {
-  auto ToIdentLocOrErr = Importer.Import(S->getIdentLoc());
-  if (!ToIdentLocOrErr)
-    return nullptr;
-  LabelDecl *ToLabelDecl =
-    cast_or_null<LabelDecl>(Importer.Import(S->getDecl()));
-  if (!ToLabelDecl && S->getDecl())
-    return nullptr;
-  Stmt *ToSubStmt = Importer.Import(S->getSubStmt());
-  if (!ToSubStmt && S->getSubStmt())
-    return nullptr;
-  return new (Importer.getToContext()) LabelStmt(*ToIdentLocOrErr, ToLabelDecl,
-                                                 ToSubStmt);
+ExpectedStmt ASTNodeImporter::VisitLabelStmt(LabelStmt *S) {
+  auto Imp = importSeq(S->getIdentLoc(), S->getDecl(), S->getSubStmt());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToIdentLoc;
+  LabelDecl *ToLabelDecl;
+  Stmt *ToSubStmt;
+  std::tie(ToIdentLoc, ToLabelDecl, ToSubStmt) = *Imp;
+
+  return new (Importer.getToContext()) LabelStmt(
+      ToIdentLoc, ToLabelDecl, ToSubStmt);
 }
 
-Stmt *ASTNodeImporter::VisitAttributedStmt(AttributedStmt *S) {
-  auto ToAttrLocOrErr = Importer.Import(S->getAttrLoc());
+ExpectedStmt ASTNodeImporter::VisitAttributedStmt(AttributedStmt *S) {
+  ExpectedSLoc ToAttrLocOrErr = import(S->getAttrLoc());
   if (!ToAttrLocOrErr)
-    return nullptr;
+    return ToAttrLocOrErr.takeError();
+
   ArrayRef<const Attr*> FromAttrs(S->getAttrs());
   SmallVector<const Attr *, 1> ToAttrs(FromAttrs.size());
   ASTContext &_ToContext = Importer.getToContext();
@@ -5793,435 +6013,356 @@ Stmt *ASTNodeImporter::VisitAttributedStmt(AttributedStmt *S) {
     });
   for (const Attr *ToA : ToAttrs) {
     if (!ToA)
-      return nullptr;
+      // FIXME: What kind of error to return?
+      return make_error<ImportError>();
   }
-  Stmt *ToSubStmt = Importer.Import(S->getSubStmt());
-  if (!ToSubStmt && S->getSubStmt())
-    return nullptr;
-  return AttributedStmt::Create(Importer.getToContext(), *ToAttrLocOrErr,
-                                ToAttrs, ToSubStmt);
+
+  ExpectedStmt ToSubStmtOrErr = import(S->getSubStmt());
+  if (!ToSubStmtOrErr)
+    return ToSubStmtOrErr.takeError();
+
+  return AttributedStmt::Create(
+      Importer.getToContext(), *ToAttrLocOrErr, ToAttrs, *ToSubStmtOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitIfStmt(IfStmt *S) {
-  auto ToIfLocOrErr = Importer.Import(S->getIfLoc());
-  if (!ToIfLocOrErr)
-    return nullptr;
-  Stmt *ToInit = Importer.Import(S->getInit());
-  if (!ToInit && S->getInit())
-    return nullptr;
-  VarDecl *ToConditionVariable = nullptr;
-  if (VarDecl *FromConditionVariable = S->getConditionVariable()) {
-    ToConditionVariable =
-      dyn_cast_or_null<VarDecl>(Importer.Import(FromConditionVariable));
-    if (!ToConditionVariable)
-      return nullptr;
-  }
-  Expr *ToCondition = Importer.Import(S->getCond());
-  if (!ToCondition && S->getCond())
-    return nullptr;
-  Stmt *ToThenStmt = Importer.Import(S->getThen());
-  if (!ToThenStmt && S->getThen())
-    return nullptr;
-  auto ToElseLocOrErr = Importer.Import(S->getElseLoc());
-  if (!ToElseLocOrErr)
-    return nullptr;
-  Stmt *ToElseStmt = Importer.Import(S->getElse());
-  if (!ToElseStmt && S->getElse())
-    return nullptr;
-  return new (Importer.getToContext()) IfStmt(Importer.getToContext(),
-                                              *ToIfLocOrErr, S->isConstexpr(),
-                                              ToInit,
-                                              ToConditionVariable,
-                                              ToCondition, ToThenStmt,
-                                              *ToElseLocOrErr, ToElseStmt);
+ExpectedStmt ASTNodeImporter::VisitIfStmt(IfStmt *S) {
+  auto Imp = importSeq(
+      S->getIfLoc(), S->getInit(), S->getConditionVariable(), S->getCond(),
+      S->getThen(), S->getElseLoc(), S->getElse());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToIfLoc, ToElseLoc;
+  Stmt *ToInit, *ToThen, *ToElse;
+  VarDecl *ToConditionVariable;
+  Expr *ToCond;
+  std::tie(
+      ToIfLoc, ToInit, ToConditionVariable, ToCond, ToThen, ToElseLoc, ToElse) =
+          *Imp;
+
+  return new (Importer.getToContext()) IfStmt(
+      Importer.getToContext(),
+      ToIfLoc, S->isConstexpr(), ToInit, ToConditionVariable, ToCond,
+      ToThen, ToElseLoc, ToElse);
 }
 
-Stmt *ASTNodeImporter::VisitSwitchStmt(SwitchStmt *S) {
-  Stmt *ToInit = Importer.Import(S->getInit());
-  if (!ToInit && S->getInit())
-    return nullptr;
-  VarDecl *ToConditionVariable = nullptr;
-  if (VarDecl *FromConditionVariable = S->getConditionVariable()) {
-    ToConditionVariable =
-      dyn_cast_or_null<VarDecl>(Importer.Import(FromConditionVariable));
-    if (!ToConditionVariable)
-      return nullptr;
-  }
-  Expr *ToCondition = Importer.Import(S->getCond());
-  if (!ToCondition && S->getCond())
-    return nullptr;
+ExpectedStmt ASTNodeImporter::VisitSwitchStmt(SwitchStmt *S) {
+  auto Imp = importSeq(
+      S->getInit(), S->getConditionVariable(), S->getCond(),
+      S->getBody(), S->getSwitchLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  Stmt *ToInit, *ToBody;
+  VarDecl *ToConditionVariable;
+  Expr *ToCond;
+  SourceLocation ToSwitchLoc;
+  std::tie(ToInit, ToConditionVariable, ToCond, ToBody, ToSwitchLoc) = *Imp;
+  
   SwitchStmt *ToStmt = new (Importer.getToContext()) SwitchStmt(
-                         Importer.getToContext(), ToInit,
-                         ToConditionVariable, ToCondition);
-  Stmt *ToBody = Importer.Import(S->getBody());
-  if (!ToBody && S->getBody())
-    return nullptr;
+      Importer.getToContext(), ToInit, ToConditionVariable, ToCond);
   ToStmt->setBody(ToBody);
-  auto ToSwitchLocOrErr = Importer.Import(S->getSwitchLoc());
-  if (!ToSwitchLocOrErr)
-    return nullptr;
-  ToStmt->setSwitchLoc(*ToSwitchLocOrErr);
+  ToStmt->setSwitchLoc(ToSwitchLoc);
+
   // Now we have to re-chain the cases.
   SwitchCase *LastChainedSwitchCase = nullptr;
   for (SwitchCase *SC = S->getSwitchCaseList(); SC != nullptr;
        SC = SC->getNextSwitchCase()) {
-    SwitchCase *ToSC = dyn_cast_or_null<SwitchCase>(Importer.Import(SC));
-    if (!ToSC)
-      return nullptr;
+    Expected<SwitchCase *> ToSCOrErr = import(SC);
+    if (!ToSCOrErr)
+      return ToSCOrErr.takeError();
     if (LastChainedSwitchCase)
-      LastChainedSwitchCase->setNextSwitchCase(ToSC);
+      LastChainedSwitchCase->setNextSwitchCase(*ToSCOrErr);
     else
-      ToStmt->setSwitchCaseList(ToSC);
-    LastChainedSwitchCase = ToSC;
+      ToStmt->setSwitchCaseList(*ToSCOrErr);
+    LastChainedSwitchCase = *ToSCOrErr;
   }
+
   return ToStmt;
 }
 
-Stmt *ASTNodeImporter::VisitWhileStmt(WhileStmt *S) {
-  VarDecl *ToConditionVariable = nullptr;
-  if (VarDecl *FromConditionVariable = S->getConditionVariable()) {
-    ToConditionVariable =
-      dyn_cast_or_null<VarDecl>(Importer.Import(FromConditionVariable));
-    if (!ToConditionVariable)
-      return nullptr;
-  }
-  Expr *ToCondition = Importer.Import(S->getCond());
-  if (!ToCondition && S->getCond())
-    return nullptr;
-  Stmt *ToBody = Importer.Import(S->getBody());
-  if (!ToBody && S->getBody())
-    return nullptr;
-  auto ToWhileLocOrErr = Importer.Import(S->getWhileLoc());
-  if (!ToWhileLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) WhileStmt(Importer.getToContext(),
-                                                 ToConditionVariable,
-                                                 ToCondition, ToBody,
-                                                 *ToWhileLocOrErr);
+ExpectedStmt ASTNodeImporter::VisitWhileStmt(WhileStmt *S) {
+  auto Imp = importSeq(
+      S->getConditionVariable(), S->getCond(), S->getBody(), S->getWhileLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  VarDecl *ToConditionVariable;
+  Expr *ToCond;
+  Stmt *ToBody;
+  SourceLocation ToWhileLoc;
+  std::tie(ToConditionVariable, ToCond, ToBody, ToWhileLoc) = *Imp;
+
+  return new (Importer.getToContext()) WhileStmt(
+      Importer.getToContext(),
+      ToConditionVariable, ToCond, ToBody, ToWhileLoc);
 }
 
-Stmt *ASTNodeImporter::VisitDoStmt(DoStmt *S) {
-  Stmt *ToBody = Importer.Import(S->getBody());
-  if (!ToBody && S->getBody())
-    return nullptr;
-  Expr *ToCondition = Importer.Import(S->getCond());
-  if (!ToCondition && S->getCond())
-    return nullptr;
-  auto ToDoLocOrErr = Importer.Import(S->getDoLoc());
-  if (!ToDoLocOrErr)
-    return nullptr;
-  auto ToWhileLocOrErr = Importer.Import(S->getWhileLoc());
-  if (!ToWhileLocOrErr)
-    return nullptr;
-  auto ToRParenLocOrErr = Importer.Import(S->getRParenLoc());
-  if (!ToRParenLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) DoStmt(ToBody, ToCondition,
-                                              *ToDoLocOrErr, *ToWhileLocOrErr,
-                                              *ToRParenLocOrErr);
+ExpectedStmt ASTNodeImporter::VisitDoStmt(DoStmt *S) {
+  auto Imp = importSeq(
+      S->getBody(), S->getCond(), S->getDoLoc(), S->getWhileLoc(),
+      S->getRParenLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  Stmt *ToBody;
+  Expr *ToCond;
+  SourceLocation ToDoLoc, ToWhileLoc, ToRParenLoc;
+  std::tie(ToBody, ToCond, ToDoLoc, ToWhileLoc, ToRParenLoc) = *Imp;
+
+  return new (Importer.getToContext()) DoStmt(
+      ToBody, ToCond, ToDoLoc, ToWhileLoc, ToRParenLoc);
 }
 
-Stmt *ASTNodeImporter::VisitForStmt(ForStmt *S) {
-  Stmt *ToInit = Importer.Import(S->getInit());
-  if (!ToInit && S->getInit())
-    return nullptr;
-  Expr *ToCondition = Importer.Import(S->getCond());
-  if (!ToCondition && S->getCond())
-    return nullptr;
-  VarDecl *ToConditionVariable = nullptr;
-  if (VarDecl *FromConditionVariable = S->getConditionVariable()) {
-    ToConditionVariable =
-      dyn_cast_or_null<VarDecl>(Importer.Import(FromConditionVariable));
-    if (!ToConditionVariable)
-      return nullptr;
-  }
-  Expr *ToInc = Importer.Import(S->getInc());
-  if (!ToInc && S->getInc())
-    return nullptr;
-  Stmt *ToBody = Importer.Import(S->getBody());
-  if (!ToBody && S->getBody())
-    return nullptr;
-  auto ToForLocOrErr = Importer.Import(S->getForLoc());
-  if (!ToForLocOrErr)
-    return nullptr;
-  auto ToLParenLocOrErr = Importer.Import(S->getLParenLoc());
-  if (!ToLParenLocOrErr)
-    return nullptr;
-  auto ToRParenLocOrErr = Importer.Import(S->getRParenLoc());
-  if (!ToRParenLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) ForStmt(Importer.getToContext(),
-                                               ToInit, ToCondition,
-                                               ToConditionVariable,
-                                               ToInc, ToBody, *ToForLocOrErr,
-                                               *ToLParenLocOrErr,
-                                               *ToRParenLocOrErr);
+ExpectedStmt ASTNodeImporter::VisitForStmt(ForStmt *S) {
+  auto Imp = importSeq(
+      S->getInit(), S->getCond(), S->getConditionVariable(), S->getInc(),
+      S->getBody(), S->getForLoc(), S->getLParenLoc(), S->getRParenLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  Stmt *ToInit;
+  Expr *ToCond, *ToInc;
+  VarDecl *ToConditionVariable;
+  Stmt *ToBody;
+  SourceLocation ToForLoc, ToLParenLoc, ToRParenLoc;
+  std::tie(
+      ToInit, ToCond, ToConditionVariable,  ToInc, ToBody, ToForLoc,
+      ToLParenLoc, ToRParenLoc) = *Imp;
+
+  return new (Importer.getToContext()) ForStmt(
+      Importer.getToContext(),
+      ToInit, ToCond, ToConditionVariable, ToInc, ToBody, ToForLoc, ToLParenLoc,
+      ToRParenLoc);
 }
 
-Stmt *ASTNodeImporter::VisitGotoStmt(GotoStmt *S) {
-  LabelDecl *ToLabel = nullptr;
-  if (LabelDecl *FromLabel = S->getLabel()) {
-    ToLabel = dyn_cast_or_null<LabelDecl>(Importer.Import(FromLabel));
-    if (!ToLabel)
-      return nullptr;
-  }
-  auto ToGotoLocOrErr = Importer.Import(S->getGotoLoc());
-  if (!ToGotoLocOrErr)
-    return nullptr;
-  auto ToLabelLocOrErr = Importer.Import(S->getLabelLoc());
-  if (!ToLabelLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) GotoStmt(ToLabel,
-                                                *ToGotoLocOrErr,
-                                                *ToLabelLocOrErr);
+ExpectedStmt ASTNodeImporter::VisitGotoStmt(GotoStmt *S) {
+  auto Imp = importSeq(S->getLabel(), S->getGotoLoc(), S->getLabelLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  LabelDecl *ToLabel;
+  SourceLocation ToGotoLoc, ToLabelLoc;
+  std::tie(ToLabel, ToGotoLoc, ToLabelLoc) = *Imp;
+
+  return new (Importer.getToContext()) GotoStmt(
+      ToLabel, ToGotoLoc, ToLabelLoc);
 }
 
-Stmt *ASTNodeImporter::VisitIndirectGotoStmt(IndirectGotoStmt *S) {
-  auto ToGotoLocOrErr = Importer.Import(S->getGotoLoc());
-  if (!ToGotoLocOrErr)
-    return nullptr;
-  auto ToStarLocOrErr = Importer.Import(S->getStarLoc());
-  if (!ToStarLocOrErr)
-    return nullptr;
-  Expr *ToTarget = Importer.Import(S->getTarget());
-  if (!ToTarget && S->getTarget())
-    return nullptr;
-  return new (Importer.getToContext()) IndirectGotoStmt(*ToGotoLocOrErr,
-                                                        *ToStarLocOrErr,
-                                                        ToTarget);
+ExpectedStmt ASTNodeImporter::VisitIndirectGotoStmt(IndirectGotoStmt *S) {
+  auto Imp = importSeq(S->getGotoLoc(), S->getStarLoc(), S->getTarget());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToGotoLoc, ToStarLoc;
+  Expr *ToTarget;
+  std::tie(ToGotoLoc, ToStarLoc, ToTarget) = *Imp;
+
+  return new (Importer.getToContext()) IndirectGotoStmt(
+      ToGotoLoc, ToStarLoc, ToTarget);
 }
 
-Stmt *ASTNodeImporter::VisitContinueStmt(ContinueStmt *S) {
-  auto ToContinueLocOrErr = Importer.Import(S->getContinueLoc());
+ExpectedStmt ASTNodeImporter::VisitContinueStmt(ContinueStmt *S) {
+  ExpectedSLoc ToContinueLocOrErr = import(S->getContinueLoc());
   if (!ToContinueLocOrErr)
-    return nullptr;
+    return ToContinueLocOrErr.takeError();
   return new (Importer.getToContext()) ContinueStmt(*ToContinueLocOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitBreakStmt(BreakStmt *S) {
-  auto ToBreakLocOrErr = Importer.Import(S->getBreakLoc());
+ExpectedStmt ASTNodeImporter::VisitBreakStmt(BreakStmt *S) {
+  auto ToBreakLocOrErr = import(S->getBreakLoc());
   if (!ToBreakLocOrErr)
-    return nullptr;
+    return ToBreakLocOrErr.takeError();
   return new (Importer.getToContext()) BreakStmt(*ToBreakLocOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitReturnStmt(ReturnStmt *S) {
-  auto ToRetLocOrErr = Importer.Import(S->getReturnLoc());
-  if (!ToRetLocOrErr)
-    return nullptr;
-  Expr *ToRetExpr = Importer.Import(S->getRetValue());
-  if (!ToRetExpr && S->getRetValue())
-    return nullptr;
-  VarDecl *NRVOCandidate = const_cast<VarDecl*>(S->getNRVOCandidate());
-  VarDecl *ToNRVOCandidate = cast_or_null<VarDecl>(Importer.Import(NRVOCandidate));
-  if (!ToNRVOCandidate && NRVOCandidate)
-    return nullptr;
-  return new (Importer.getToContext()) ReturnStmt(*ToRetLocOrErr, ToRetExpr,
-                                                  ToNRVOCandidate);
+ExpectedStmt ASTNodeImporter::VisitReturnStmt(ReturnStmt *S) {
+  auto Imp = importSeq(
+      S->getReturnLoc(), S->getRetValue(), S->getNRVOCandidate());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToReturnLoc;
+  Expr *ToRetValue;
+  const VarDecl *ToNRVOCandidate;
+  std::tie(ToReturnLoc, ToRetValue, ToNRVOCandidate) = *Imp;
+  
+  return new (Importer.getToContext()) ReturnStmt(
+      ToReturnLoc, ToRetValue, ToNRVOCandidate);
 }
 
-Stmt *ASTNodeImporter::VisitCXXCatchStmt(CXXCatchStmt *S) {
-  auto ToCatchLocOrErr = Importer.Import(S->getCatchLoc());
-  if (!ToCatchLocOrErr)
-    return nullptr;
-  VarDecl *ToExceptionDecl = nullptr;
-  if (VarDecl *FromExceptionDecl = S->getExceptionDecl()) {
-    ToExceptionDecl =
-      dyn_cast_or_null<VarDecl>(Importer.Import(FromExceptionDecl));
-    if (!ToExceptionDecl)
-      return nullptr;
-  }
-  Stmt *ToHandlerBlock = Importer.Import(S->getHandlerBlock());
-  if (!ToHandlerBlock && S->getHandlerBlock())
-    return nullptr;
-  return new (Importer.getToContext()) CXXCatchStmt(*ToCatchLocOrErr,
-                                                    ToExceptionDecl,
-                                                    ToHandlerBlock);
+ExpectedStmt ASTNodeImporter::VisitCXXCatchStmt(CXXCatchStmt *S) {
+  auto Imp = importSeq(
+      S->getCatchLoc(), S->getExceptionDecl(), S->getHandlerBlock());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToCatchLoc;
+  VarDecl *ToExceptionDecl;
+  Stmt *ToHandlerBlock;
+  std::tie(ToCatchLoc, ToExceptionDecl, ToHandlerBlock) = *Imp;
+
+  return new (Importer.getToContext()) CXXCatchStmt (
+      ToCatchLoc, ToExceptionDecl, ToHandlerBlock);
 }
 
-Stmt *ASTNodeImporter::VisitCXXTryStmt(CXXTryStmt *S) {
-  auto ToTryLocOrErr = Importer.Import(S->getTryLoc());
+ExpectedStmt ASTNodeImporter::VisitCXXTryStmt(CXXTryStmt *S) {
+  ExpectedSLoc ToTryLocOrErr = import(S->getTryLoc());
   if (!ToTryLocOrErr)
-    return nullptr;
-  Stmt *ToTryBlock = Importer.Import(S->getTryBlock());
-  if (!ToTryBlock && S->getTryBlock())
-    return nullptr;
+    return ToTryLocOrErr.takeError();
+
+  ExpectedStmt ToTryBlockOrErr = import(S->getTryBlock());
+  if (!ToTryBlockOrErr)
+    return ToTryBlockOrErr.takeError();
+
   SmallVector<Stmt *, 1> ToHandlers(S->getNumHandlers());
   for (unsigned HI = 0, HE = S->getNumHandlers(); HI != HE; ++HI) {
     CXXCatchStmt *FromHandler = S->getHandler(HI);
-    if (Stmt *ToHandler = Importer.Import(FromHandler))
-      ToHandlers[HI] = ToHandler;
+    if (auto ToHandlerOrErr = import(FromHandler))
+      ToHandlers[HI] = *ToHandlerOrErr;
     else
-      return nullptr;
+      return ToHandlerOrErr.takeError();
   }
-  return CXXTryStmt::Create(Importer.getToContext(), *ToTryLocOrErr, ToTryBlock,
-                            ToHandlers);
+
+  return CXXTryStmt::Create(
+      Importer.getToContext(), *ToTryLocOrErr,*ToTryBlockOrErr, ToHandlers);
 }
 
-Stmt *ASTNodeImporter::VisitCXXForRangeStmt(CXXForRangeStmt *S) {
+ExpectedStmt ASTNodeImporter::VisitCXXForRangeStmt(CXXForRangeStmt *S) {
+  auto Imp1 = importSeq(
+      S->getRangeStmt(), S->getBeginStmt(), S->getEndStmt(), S->getCond(),
+      S->getInc(), S->getLoopVarStmt(), S->getBody());
+  if (!Imp1)
+    return Imp1.takeError();
+  auto Imp2 = importSeq(
+      S->getForLoc(), S->getCoawaitLoc(), S->getColonLoc(), S->getRParenLoc());
   DeclStmt *ToRange =
     dyn_cast_or_null<DeclStmt>(Importer.Import(S->getRangeStmt()));
-  if (!ToRange && S->getRangeStmt())
-    return nullptr;
-  DeclStmt *ToBegin =
-    dyn_cast_or_null<DeclStmt>(Importer.Import(S->getBeginStmt()));
-  if (!ToBegin && S->getBeginStmt())
-    return nullptr;
-  DeclStmt *ToEnd =
-    dyn_cast_or_null<DeclStmt>(Importer.Import(S->getEndStmt()));
-  if (!ToEnd && S->getEndStmt())
-    return nullptr;
-  Expr *ToCond = Importer.Import(S->getCond());
-  if (!ToCond && S->getCond())
-    return nullptr;
-  Expr *ToInc = Importer.Import(S->getInc());
-  if (!ToInc && S->getInc())
-    return nullptr;
-  DeclStmt *ToLoopVar =
-    dyn_cast_or_null<DeclStmt>(Importer.Import(S->getLoopVarStmt()));
-  if (!ToLoopVar && S->getLoopVarStmt())
-    return nullptr;
-  Stmt *ToBody = Importer.Import(S->getBody());
-  if (!ToBody && S->getBody())
-    return nullptr;
-  auto ToForLocOrErr = Importer.Import(S->getForLoc());
-  if (!ToForLocOrErr)
-    return nullptr;
-  auto ToCoawaitLocOrErr = Importer.Import(S->getCoawaitLoc());
-  if (!ToCoawaitLocOrErr)
-    return nullptr;
-  auto ToColonLocOrErr = Importer.Import(S->getColonLoc());
-  if (!ToColonLocOrErr)
-    return nullptr;
-  auto ToRParenLocOrErr = Importer.Import(S->getRParenLoc());
-  if (!ToRParenLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) CXXForRangeStmt(ToRange, ToBegin, ToEnd,
-                                                       ToCond, ToInc,
-                                                       ToLoopVar, ToBody,
-                                                       *ToForLocOrErr,
-                                                       *ToCoawaitLocOrErr,
-                                                       *ToColonLocOrErr,
-                                                       *ToRParenLocOrErr);
+  if (!Imp2)
+    return Imp2.takeError();
+
+  DeclStmt *ToRangeStmt, *ToBeginStmt, *ToEndStmt, *ToLoopVarStmt;
+  Expr *ToCond, *ToInc;
+  Stmt *ToBody;
+  std::tie(
+      ToRangeStmt, ToBeginStmt, ToEndStmt, ToCond, ToInc, ToLoopVarStmt,
+      ToBody) = *Imp1;
+  SourceLocation ToForLoc, ToCoawaitLoc, ToColonLoc, ToRParenLoc;
+  std::tie(ToForLoc, ToCoawaitLoc, ToColonLoc, ToRParenLoc) = *Imp2;
+
+  return new (Importer.getToContext()) CXXForRangeStmt(
+      ToRange, ToBeginStmt, ToEndStmt, ToCond, ToInc, ToLoopVarStmt, ToBody,
+      ToForLoc, ToCoawaitLoc, ToColonLoc, ToRParenLoc);
 }
 
-Stmt *ASTNodeImporter::VisitObjCForCollectionStmt(ObjCForCollectionStmt *S) {
-  Stmt *ToElem = Importer.Import(S->getElement());
-  if (!ToElem && S->getElement())
-    return nullptr;
-  Expr *ToCollect = Importer.Import(S->getCollection());
-  if (!ToCollect && S->getCollection())
-    return nullptr;
-  Stmt *ToBody = Importer.Import(S->getBody());
-  if (!ToBody && S->getBody())
-    return nullptr;
-  auto ToForLocOrErr = Importer.Import(S->getForLoc());
-  if (!ToForLocOrErr)
-    return nullptr;
-  auto ToRParenLocOrErr = Importer.Import(S->getRParenLoc());
-  if (!ToRParenLocOrErr)
-    return nullptr;
-  return new (Importer.getToContext()) ObjCForCollectionStmt(ToElem,
-                                                             ToCollect,
+ExpectedStmt ASTNodeImporter::VisitObjCForCollectionStmt(ObjCForCollectionStmt *S) {
+  auto Imp = importSeq(
+      S->getElement(), S->getCollection(), S->getBody(),
+      S->getForLoc(), S->getRParenLoc());
+  if (!Imp)
+    return Imp.takeError();
+
+  Stmt *ToElement, *ToBody;
+  Expr *ToCollection;
+  SourceLocation ToForLoc, ToRParenLoc;
+  std::tie(ToElement, ToCollection, ToBody, ToForLoc, ToRParenLoc) = *Imp;
+
+  return new (Importer.getToContext()) ObjCForCollectionStmt(ToElement,
+                                                             ToCollection,
                                                              ToBody,
-                                                             *ToForLocOrErr,
-                                                             *ToRParenLocOrErr);
+                                                             ToForLoc,
+                                                             ToRParenLoc);
 }
 
-Stmt *ASTNodeImporter::VisitObjCAtCatchStmt(ObjCAtCatchStmt *S) {
-  auto ToAtCatchLocOrErr = Importer.Import(S->getAtCatchLoc());
-  if (!ToAtCatchLocOrErr)
-    return nullptr;
-  auto ToRParenLocOrErr = Importer.Import(S->getRParenLoc());
-  if (!ToRParenLocOrErr)
-    return nullptr;
-  VarDecl *ToExceptionDecl = nullptr;
-  if (VarDecl *FromExceptionDecl = S->getCatchParamDecl()) {
-    ToExceptionDecl =
-      dyn_cast_or_null<VarDecl>(Importer.Import(FromExceptionDecl));
-    if (!ToExceptionDecl)
-      return nullptr;
-  }
-  Stmt *ToBody = Importer.Import(S->getCatchBody());
-  if (!ToBody && S->getCatchBody())
-    return nullptr;
-  return new (Importer.getToContext()) ObjCAtCatchStmt(*ToAtCatchLocOrErr,
-                                                       *ToRParenLocOrErr,
-                                                       ToExceptionDecl,
-                                                       ToBody);
+ExpectedStmt ASTNodeImporter::VisitObjCAtCatchStmt(ObjCAtCatchStmt *S) {
+  auto Imp = importSeq(
+      S->getAtCatchLoc(), S->getRParenLoc(), S->getCatchParamDecl(),
+      S->getCatchBody());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToAtCatchLoc, ToRParenLoc;
+  VarDecl *ToCatchParamDecl;
+  Stmt *ToCatchBody;
+  std::tie(ToAtCatchLoc, ToRParenLoc, ToCatchParamDecl, ToCatchBody) = *Imp;
+
+  return new (Importer.getToContext()) ObjCAtCatchStmt (
+      ToAtCatchLoc, ToRParenLoc, ToCatchParamDecl, ToCatchBody);
 }
 
-Stmt *ASTNodeImporter::VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S) {
-  auto ToAtFinallyLocOrErr = Importer.Import(S->getAtFinallyLoc());
+ExpectedStmt ASTNodeImporter::VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S) {
+  ExpectedSLoc ToAtFinallyLocOrErr = import(S->getAtFinallyLoc());
   if (!ToAtFinallyLocOrErr)
-    return nullptr;
-  Stmt *ToAtFinallyStmt = Importer.Import(S->getFinallyBody());
-  if (!ToAtFinallyStmt && S->getFinallyBody())
-    return nullptr;
+    return ToAtFinallyLocOrErr.takeError();
+  ExpectedStmt ToAtFinallyStmtOrErr = import(S->getFinallyBody());
+  if (!ToAtFinallyStmtOrErr)
+    return ToAtFinallyStmtOrErr.takeError();
   return new (Importer.getToContext()) ObjCAtFinallyStmt(*ToAtFinallyLocOrErr,
-                                                         ToAtFinallyStmt);
+                                                         *ToAtFinallyStmtOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitObjCAtTryStmt(ObjCAtTryStmt *S) {
-  auto ToAtTryLocOrErr = Importer.Import(S->getAtTryLoc());
-  if (!ToAtTryLocOrErr)
-    return nullptr;
-  Stmt *ToAtTryStmt = Importer.Import(S->getTryBody());
-  if (!ToAtTryStmt && S->getTryBody())
-    return nullptr;
+ExpectedStmt ASTNodeImporter::VisitObjCAtTryStmt(ObjCAtTryStmt *S) {
+  auto Imp = importSeq(
+      S->getAtTryLoc(), S->getTryBody(), S->getFinallyStmt());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToAtTryLoc;
+  Stmt *ToTryBody, *ToFinallyStmt;
+  std::tie(ToAtTryLoc, ToTryBody, ToFinallyStmt) = *Imp;
+
   SmallVector<Stmt *, 1> ToCatchStmts(S->getNumCatchStmts());
   for (unsigned CI = 0, CE = S->getNumCatchStmts(); CI != CE; ++CI) {
     ObjCAtCatchStmt *FromCatchStmt = S->getCatchStmt(CI);
-    if (Stmt *ToCatchStmt = Importer.Import(FromCatchStmt))
-      ToCatchStmts[CI] = ToCatchStmt;
+    if (ExpectedStmt ToCatchStmtOrErr = import(FromCatchStmt))
+      ToCatchStmts[CI] = *ToCatchStmtOrErr;
     else
-      return nullptr;
+      return ToCatchStmtOrErr.takeError();
   }
-  Stmt *ToAtFinallyStmt = Importer.Import(S->getFinallyStmt());
-  if (!ToAtFinallyStmt && S->getFinallyStmt())
-    return nullptr;
+
   return ObjCAtTryStmt::Create(Importer.getToContext(),
-                               *ToAtTryLocOrErr, ToAtTryStmt,
+                               ToAtTryLoc, ToTryBody,
                                ToCatchStmts.begin(), ToCatchStmts.size(),
-                               ToAtFinallyStmt);
+                               ToFinallyStmt);
 }
 
-Stmt *ASTNodeImporter::VisitObjCAtSynchronizedStmt
+ExpectedStmt ASTNodeImporter::VisitObjCAtSynchronizedStmt
   (ObjCAtSynchronizedStmt *S) {
-  auto ToAtSynchronizedLocOrErr = Importer.Import(S->getAtSynchronizedLoc());
-  if (!ToAtSynchronizedLocOrErr)
-    return nullptr;
-  Expr *ToSynchExpr = Importer.Import(S->getSynchExpr());
-  if (!ToSynchExpr && S->getSynchExpr())
-    return nullptr;
-  Stmt *ToSynchBody = Importer.Import(S->getSynchBody());
-  if (!ToSynchBody && S->getSynchBody())
-    return nullptr;
+  auto Imp = importSeq(
+      S->getAtSynchronizedLoc(), S->getSynchExpr(), S->getSynchBody());
+  if (!Imp)
+    return Imp.takeError();
+
+  SourceLocation ToAtSynchronizedLoc;
+  Expr *ToSynchExpr;
+  Stmt *ToSynchBody;
+  std::tie(ToAtSynchronizedLoc, ToSynchExpr, ToSynchBody) = *Imp;
+
   return new (Importer.getToContext()) ObjCAtSynchronizedStmt(
-    *ToAtSynchronizedLocOrErr, ToSynchExpr, ToSynchBody);
+    ToAtSynchronizedLoc, ToSynchExpr, ToSynchBody);
 }
 
-Stmt *ASTNodeImporter::VisitObjCAtThrowStmt(ObjCAtThrowStmt *S) {
-  auto ToAtThrowLocOrErr = Importer.Import(S->getThrowLoc());
-  if (!ToAtThrowLocOrErr)
-    return nullptr;
-  Expr *ToThrow = Importer.Import(S->getThrowExpr());
-  if (!ToThrow && S->getThrowExpr())
-    return nullptr;
+ExpectedStmt ASTNodeImporter::VisitObjCAtThrowStmt(ObjCAtThrowStmt *S) {
+  ExpectedSLoc ToThrowLocOrErr = import(S->getThrowLoc());
+  if (!ToThrowLocOrErr)
+    return ToThrowLocOrErr.takeError();
+  ExpectedExpr ToThrowExprOrErr = import(S->getThrowExpr());
+  if (!ToThrowExprOrErr)
+    return ToThrowExprOrErr.takeError();
   return new (Importer.getToContext()) ObjCAtThrowStmt(
-      *ToAtThrowLocOrErr, ToThrow);
+      *ToThrowLocOrErr, *ToThrowExprOrErr);
 }
 
-Stmt *ASTNodeImporter::VisitObjCAutoreleasePoolStmt
-  (ObjCAutoreleasePoolStmt *S) {
-  auto ToAtLocOrErr = Importer.Import(S->getAtLoc());
+ExpectedStmt ASTNodeImporter::VisitObjCAutoreleasePoolStmt(
+    ObjCAutoreleasePoolStmt *S) {
+  ExpectedSLoc ToAtLocOrErr = import(S->getAtLoc());
   if (!ToAtLocOrErr)
-    return nullptr;
-  Stmt *ToSubStmt = Importer.Import(S->getSubStmt());
-  if (!ToSubStmt && S->getSubStmt())
-    return nullptr;
+    return ToAtLocOrErr.takeError();
+  ExpectedStmt ToSubStmtOrErr = import(S->getSubStmt());
+  if (!ToSubStmtOrErr)
+    return ToSubStmtOrErr.takeError();
   return new (Importer.getToContext()) ObjCAutoreleasePoolStmt(*ToAtLocOrErr,
-                                                               ToSubStmt);
+                                                               *ToSubStmtOrErr);
 }
 
 //----------------------------------------------------------------------------
@@ -8462,16 +8603,15 @@ Stmt *ASTImporter::Import(Stmt *FromS) {
   
   // Import the type
   ASTNodeImporter Importer(*this);
-  Stmt *ToS = Importer.Visit(FromS);
+  ExpectedStmt ToS = Importer.Visit(FromS);
   if (!ToS) {
-    // Set the error if not set already more specifically.
-    //setCurrentImportDeclError(ImportErrorKind::StmtFailed);
+    handleAllErrors(ToS.takeError(), [](const ImportError &) { });
     return nullptr;
   }
 
   // Record the imported declaration.
-  ImportedStmts[FromS] = ToS;
-  return ToS;
+  ImportedStmts[FromS] = *ToS;
+  return *ToS;
 }
 
 Expected<NestedNameSpecifier *>

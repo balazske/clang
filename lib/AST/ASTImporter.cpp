@@ -916,11 +916,10 @@ using namespace clang;
 
 ExpectedType ASTNodeImporter::VisitType(const Type *T) {
   llvm_unreachable("Unsupported Type at import");
-  //return make_error<ImportError>();
 }
 
 ExpectedType ASTNodeImporter::VisitAtomicType(const AtomicType *T){
-  auto UnderlyingTypeOrErr = Importer.Import(T->getValueType());
+  ExpectedType UnderlyingTypeOrErr = import(T->getValueType());
   if (!UnderlyingTypeOrErr)
     return UnderlyingTypeOrErr.takeError();
 
@@ -973,7 +972,7 @@ ExpectedType ASTNodeImporter::VisitBuiltinType(const BuiltinType *T) {
 }
 
 ExpectedType ASTNodeImporter::VisitDecayedType(const DecayedType *T) {
-  auto ToOriginalTypeOrErr = Importer.Import(T->getOriginalType());
+  ExpectedType ToOriginalTypeOrErr = import(T->getOriginalType());
   if (!ToOriginalTypeOrErr)
     return ToOriginalTypeOrErr.takeError();
 
@@ -981,7 +980,7 @@ ExpectedType ASTNodeImporter::VisitDecayedType(const DecayedType *T) {
 }
 
 ExpectedType ASTNodeImporter::VisitComplexType(const ComplexType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
+  ExpectedType ToElementTypeOrErr = import(T->getElementType());
   if (!ToElementTypeOrErr)
     return ToElementTypeOrErr.takeError();
 
@@ -989,7 +988,7 @@ ExpectedType ASTNodeImporter::VisitComplexType(const ComplexType *T) {
 }
 
 ExpectedType ASTNodeImporter::VisitPointerType(const PointerType *T) {
-  auto ToPointeeTypeOrErr = Importer.Import(T->getPointeeType());
+  ExpectedType ToPointeeTypeOrErr = import(T->getPointeeType());
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
@@ -998,7 +997,7 @@ ExpectedType ASTNodeImporter::VisitPointerType(const PointerType *T) {
 
 ExpectedType ASTNodeImporter::VisitBlockPointerType(const BlockPointerType *T) {
   // FIXME: Check for blocks support in "to" context.
-  auto ToPointeeTypeOrErr = Importer.Import(T->getPointeeType());
+  ExpectedType ToPointeeTypeOrErr = import(T->getPointeeType());
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
@@ -1008,7 +1007,7 @@ ExpectedType ASTNodeImporter::VisitBlockPointerType(const BlockPointerType *T) {
 ExpectedType
 ASTNodeImporter::VisitLValueReferenceType(const LValueReferenceType *T) {
   // FIXME: Check for C++ support in "to" context.
-  auto ToPointeeTypeOrErr = Importer.Import(T->getPointeeTypeAsWritten());
+  ExpectedType ToPointeeTypeOrErr = import(T->getPointeeTypeAsWritten());
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
@@ -1018,7 +1017,7 @@ ASTNodeImporter::VisitLValueReferenceType(const LValueReferenceType *T) {
 ExpectedType
 ASTNodeImporter::VisitRValueReferenceType(const RValueReferenceType *T) {
   // FIXME: Check for C++0x support in "to" context.
-  auto ToPointeeTypeOrErr = Importer.Import(T->getPointeeTypeAsWritten());
+  ExpectedType ToPointeeTypeOrErr = import(T->getPointeeTypeAsWritten());
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
@@ -1028,11 +1027,11 @@ ASTNodeImporter::VisitRValueReferenceType(const RValueReferenceType *T) {
 ExpectedType
 ASTNodeImporter::VisitMemberPointerType(const MemberPointerType *T) {
   // FIXME: Check for C++ support in "to" context.
-  auto ToPointeeTypeOrErr = Importer.Import(T->getPointeeType());
+  ExpectedType ToPointeeTypeOrErr = import(T->getPointeeType());
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 
-  auto ClassTypeOrErr = Importer.Import(QualType(T->getClass(), 0));
+  ExpectedType ClassTypeOrErr = import(QualType(T->getClass(), 0));
   if (!ClassTypeOrErr)
     return ClassTypeOrErr.takeError();
 
@@ -1042,7 +1041,7 @@ ASTNodeImporter::VisitMemberPointerType(const MemberPointerType *T) {
 
 ExpectedType
 ASTNodeImporter::VisitConstantArrayType(const ConstantArrayType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
+  ExpectedType ToElementTypeOrErr = import(T->getElementType());
   if (!ToElementTypeOrErr)
     return ToElementTypeOrErr.takeError();
 
@@ -1054,7 +1053,7 @@ ASTNodeImporter::VisitConstantArrayType(const ConstantArrayType *T) {
 
 ExpectedType
 ASTNodeImporter::VisitIncompleteArrayType(const IncompleteArrayType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
+  ExpectedType ToElementTypeOrErr = import(T->getElementType());
   if (!ToElementTypeOrErr)
     return ToElementTypeOrErr.takeError();
 
@@ -1065,47 +1064,40 @@ ASTNodeImporter::VisitIncompleteArrayType(const IncompleteArrayType *T) {
 
 ExpectedType
 ASTNodeImporter::VisitVariableArrayType(const VariableArrayType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
-  if (!ToElementTypeOrErr)
-    return ToElementTypeOrErr.takeError();
+  QualType ToElementType;
+  Expr *ToSizeExpr;
+  SourceRange ToBracketsRange;
+  if (auto Imp = importSeq(
+      T->getElementType(), T->getSizeExpr(), T->getBracketsRange()))
+    std::tie(ToElementType, ToSizeExpr, ToBracketsRange) = *Imp;
+  else
+    return Imp.takeError();
 
-  Expr *Size = Importer.Import(T->getSizeExpr());
-  if (!Size)
-    return make_error<ImportError>();
-
-  auto BracketsOrErr =  Importer.Import(T->getBracketsRange());
-  if (!BracketsOrErr)
-    return BracketsOrErr.takeError();
-
-  return Importer.getToContext().getVariableArrayType(*ToElementTypeOrErr, Size,
-                                                      T->getSizeModifier(),
-                                                T->getIndexTypeCVRQualifiers(),
-                                                      *BracketsOrErr);
+  return Importer.getToContext().getVariableArrayType(
+      ToElementType, ToSizeExpr, T->getSizeModifier(),
+      T->getIndexTypeCVRQualifiers(), ToBracketsRange);
 }
 
 ExpectedType ASTNodeImporter::VisitDependentSizedArrayType(
     const DependentSizedArrayType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
-  if (!ToElementTypeOrErr)
-    return ToElementTypeOrErr.takeError();
-
+  QualType ToElementType;
+  Expr *ToSizeExpr;
+  SourceRange ToBracketsRange;
+  if (auto Imp = importSeq(
+      T->getElementType(), T->getSizeExpr(), T->getBracketsRange()))
+    std::tie(ToElementType, ToSizeExpr, ToBracketsRange) = *Imp;
+  else
+    return Imp.takeError();
   // SizeExpr may be null if size is not specified directly.
   // For example, 'int a[]'.
-  Expr *Size = Importer.Import(T->getSizeExpr());
-  if (!Size && T->getSizeExpr())
-    return make_error<ImportError>();
-
-  auto BracketsOrErr = Importer.Import(T->getBracketsRange());
-  if (!BracketsOrErr)
-    return BracketsOrErr.takeError();
 
   return Importer.getToContext().getDependentSizedArrayType(
-      *ToElementTypeOrErr, Size, T->getSizeModifier(),
-      T->getIndexTypeCVRQualifiers(), *BracketsOrErr);
+      ToElementType, ToSizeExpr, T->getSizeModifier(),
+      T->getIndexTypeCVRQualifiers(), ToBracketsRange);
 }
 
 ExpectedType ASTNodeImporter::VisitVectorType(const VectorType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
+  ExpectedType ToElementTypeOrErr = import(T->getElementType());
   if (!ToElementTypeOrErr)
     return ToElementTypeOrErr.takeError();
 
@@ -1115,7 +1107,7 @@ ExpectedType ASTNodeImporter::VisitVectorType(const VectorType *T) {
 }
 
 ExpectedType ASTNodeImporter::VisitExtVectorType(const ExtVectorType *T) {
-  auto ToElementTypeOrErr = Importer.Import(T->getElementType());
+  ExpectedType ToElementTypeOrErr = import(T->getElementType());
   if (!ToElementTypeOrErr)
     return ToElementTypeOrErr.takeError();
 
@@ -1127,7 +1119,7 @@ ExpectedType
 ASTNodeImporter::VisitFunctionNoProtoType(const FunctionNoProtoType *T) {
   // FIXME: What happens if we're importing a function without a prototype 
   // into C++? Should we make it variadic?
-  auto ToReturnTypeOrErr = Importer.Import(T->getReturnType());
+  ExpectedType ToReturnTypeOrErr = import(T->getReturnType());
   if (!ToReturnTypeOrErr)
     return ToReturnTypeOrErr.takeError();
 
@@ -1137,14 +1129,14 @@ ASTNodeImporter::VisitFunctionNoProtoType(const FunctionNoProtoType *T) {
 
 ExpectedType
 ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
-  auto ToReturnTypeOrErr = Importer.Import(T->getReturnType());
+  ExpectedType ToReturnTypeOrErr = import(T->getReturnType());
   if (!ToReturnTypeOrErr)
     return ToReturnTypeOrErr.takeError();
 
   // Import argument types
   SmallVector<QualType, 4> ArgTypes;
   for (const auto &A : T->param_types()) {
-    auto TyOrErr = Importer.Import(A);
+    ExpectedType TyOrErr = import(A);
     if (!TyOrErr)
       return TyOrErr.takeError();
     ArgTypes.push_back(*TyOrErr);
@@ -1153,7 +1145,7 @@ ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
   // Import exception types
   SmallVector<QualType, 4> ExceptionTypes;
   for (const auto &E : T->exceptions()) {
-    auto TyOrErr = Importer.Import(E);
+    ExpectedType TyOrErr = import(E);
     if (!TyOrErr)
       return TyOrErr.takeError();
     ExceptionTypes.push_back(*TyOrErr);
@@ -1162,6 +1154,13 @@ ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
   FunctionProtoType::ExtProtoInfo FromEPI = T->getExtProtoInfo();
   FunctionProtoType::ExtProtoInfo ToEPI;
 
+  auto Imp = importSeq(
+      FromEPI.ExceptionSpec.NoexceptExpr,
+      FromEPI.ExceptionSpec.SourceDecl,
+      FromEPI.ExceptionSpec.SourceTemplate);
+  if (!Imp)
+    return Imp.takeError();
+
   ToEPI.ExtInfo = FromEPI.ExtInfo;
   ToEPI.Variadic = FromEPI.Variadic;
   ToEPI.HasTrailingReturn = FromEPI.HasTrailingReturn;
@@ -1169,12 +1168,10 @@ ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
   ToEPI.RefQualifier = FromEPI.RefQualifier;
   ToEPI.ExceptionSpec.Type = FromEPI.ExceptionSpec.Type;
   ToEPI.ExceptionSpec.Exceptions = ExceptionTypes;
-  ToEPI.ExceptionSpec.NoexceptExpr =
-      Importer.Import(FromEPI.ExceptionSpec.NoexceptExpr);
-  ToEPI.ExceptionSpec.SourceDecl = cast_or_null<FunctionDecl>(
-      Importer.Import(FromEPI.ExceptionSpec.SourceDecl));
-  ToEPI.ExceptionSpec.SourceTemplate = cast_or_null<FunctionDecl>(
-      Importer.Import(FromEPI.ExceptionSpec.SourceTemplate));
+  std::tie(
+      ToEPI.ExceptionSpec.NoexceptExpr,
+      ToEPI.ExceptionSpec.SourceDecl,
+      ToEPI.ExceptionSpec.SourceTemplate) = *Imp;
 
   return Importer.getToContext().getFunctionType(
       *ToReturnTypeOrErr, ArgTypes, ToEPI);
@@ -1182,22 +1179,18 @@ ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
 
 ExpectedType ASTNodeImporter::VisitUnresolvedUsingType(
     const UnresolvedUsingType *T) {
-  UnresolvedUsingTypenameDecl *ToD = cast_or_null<UnresolvedUsingTypenameDecl>(
-        Importer.Import(T->getDecl()));
-  if (!ToD)
-    return make_error<ImportError>();
+  UnresolvedUsingTypenameDecl *ToD;
+  Decl *ToPrevD;
+  if (auto Imp = importSeq(T->getDecl(), T->getDecl()->getPreviousDecl()))
+    std::tie(ToD, ToPrevD) = *Imp;
+  else
+    return Imp.takeError();
 
-  UnresolvedUsingTypenameDecl *ToPrevD =
-      cast_or_null<UnresolvedUsingTypenameDecl>(
-        Importer.Import(T->getDecl()->getPreviousDecl()));
-  if (!ToPrevD && T->getDecl()->getPreviousDecl())
-    return make_error<ImportError>();
-
-  return Importer.getToContext().getTypeDeclType(ToD, ToPrevD);
+  return Importer.getToContext().getTypeDeclType(ToD, cast<TypeDecl>(ToPrevD));
 }
 
 ExpectedType ASTNodeImporter::VisitParenType(const ParenType *T) {
-  auto ToInnerTypeOrErr = Importer.Import(T->getInnerType());
+  ExpectedType ToInnerTypeOrErr = import(T->getInnerType());
   if (!ToInnerTypeOrErr)
     return ToInnerTypeOrErr.takeError();
 
@@ -1205,24 +1198,23 @@ ExpectedType ASTNodeImporter::VisitParenType(const ParenType *T) {
 }
 
 ExpectedType ASTNodeImporter::VisitTypedefType(const TypedefType *T) {
-  TypedefNameDecl *ToDecl
-             = dyn_cast_or_null<TypedefNameDecl>(Importer.Import(T->getDecl()));
-  if (!ToDecl)
-    return make_error<ImportError>();
+  Expected<TypedefNameDecl *> ToDeclOrErr = import(T->getDecl());
+  if (!ToDeclOrErr)
+    return ToDeclOrErr.takeError();
   
-  return Importer.getToContext().getTypeDeclType(ToDecl);
+  return Importer.getToContext().getTypeDeclType(*ToDeclOrErr);
 }
 
 ExpectedType ASTNodeImporter::VisitTypeOfExprType(const TypeOfExprType *T) {
-  Expr *ToExpr = Importer.Import(T->getUnderlyingExpr());
-  if (!ToExpr)
-    return make_error<ImportError>();
-  
-  return Importer.getToContext().getTypeOfExprType(ToExpr);
+  ExpectedExpr ToExprOrErr = import(T->getUnderlyingExpr());
+  if (!ToExprOrErr)
+    return ToExprOrErr.takeError();
+
+  return Importer.getToContext().getTypeOfExprType(*ToExprOrErr);
 }
 
 ExpectedType ASTNodeImporter::VisitTypeOfType(const TypeOfType *T) {
-  auto ToUnderlyingTypeOrErr = Importer.Import(T->getUnderlyingType());
+  ExpectedType ToUnderlyingTypeOrErr = import(T->getUnderlyingType());
   if (!ToUnderlyingTypeOrErr)
     return ToUnderlyingTypeOrErr.takeError();
 
@@ -1231,36 +1223,35 @@ ExpectedType ASTNodeImporter::VisitTypeOfType(const TypeOfType *T) {
 
 ExpectedType ASTNodeImporter::VisitDecltypeType(const DecltypeType *T) {
   // FIXME: Make sure that the "to" context supports C++0x!
-  Expr *ToExpr = Importer.Import(T->getUnderlyingExpr());
-  if (!ToExpr)
-    return make_error<ImportError>();
+  ExpectedExpr ToExprOrErr = import(T->getUnderlyingExpr());
+  if (!ToExprOrErr)
+    return ToExprOrErr.takeError();
 
-  auto ToUnderlyingTypeOrErr = Importer.Import(T->getUnderlyingType());
+  ExpectedType ToUnderlyingTypeOrErr = import(T->getUnderlyingType());
   if (!ToUnderlyingTypeOrErr)
     return ToUnderlyingTypeOrErr.takeError();
 
   return Importer.getToContext().getDecltypeType(
-      ToExpr, *ToUnderlyingTypeOrErr);
+      *ToExprOrErr, *ToUnderlyingTypeOrErr);
 }
 
 ExpectedType
 ASTNodeImporter::VisitUnaryTransformType(const UnaryTransformType *T) {
-  auto ToBaseTypeOrErr = Importer.Import(T->getBaseType());
+  ExpectedType ToBaseTypeOrErr = import(T->getBaseType());
   if (!ToBaseTypeOrErr)
     return ToBaseTypeOrErr.takeError();
 
-  auto ToUnderlyingTypeOrErr = Importer.Import(T->getUnderlyingType());
+  ExpectedType ToUnderlyingTypeOrErr = import(T->getUnderlyingType());
   if (!ToUnderlyingTypeOrErr)
     return ToUnderlyingTypeOrErr.takeError();
 
-  return Importer.getToContext().getUnaryTransformType(*ToBaseTypeOrErr,
-                                                       *ToUnderlyingTypeOrErr,
-                                                       T->getUTTKind());
+  return Importer.getToContext().getUnaryTransformType(
+      *ToBaseTypeOrErr, *ToUnderlyingTypeOrErr, T->getUTTKind());
 }
 
 ExpectedType ASTNodeImporter::VisitAutoType(const AutoType *T) {
   // FIXME: Make sure that the "to" context supports C++11!
-  auto ToDeducedTypeOrErr = Importer.Import(T->getDeducedType());
+  ExpectedType ToDeducedTypeOrErr = import(T->getDeducedType());
   if (!ToDeducedTypeOrErr)
     return ToDeducedTypeOrErr.takeError();
 
@@ -1271,11 +1262,11 @@ ExpectedType ASTNodeImporter::VisitAutoType(const AutoType *T) {
 
 ExpectedType ASTNodeImporter::VisitInjectedClassNameType(
     const InjectedClassNameType *T) {
-  CXXRecordDecl *D = cast_or_null<CXXRecordDecl>(Importer.Import(T->getDecl()));
-  if (!D)
-    return make_error<ImportError>();
+  Expected<CXXRecordDecl *> ToDeclOrErr = import(T->getDecl());
+  if (!ToDeclOrErr)
+    return ToDeclOrErr.takeError();
 
-  auto ToInjTypeOrErr = Importer.Import(T->getInjectedSpecializationType());
+  ExpectedType ToInjTypeOrErr = import(T->getInjectedSpecializationType());
   if (!ToInjTypeOrErr)
     return ToInjTypeOrErr.takeError();
 
@@ -1288,32 +1279,30 @@ ExpectedType ASTNodeImporter::VisitInjectedClassNameType(
   };
 
   return QualType(new (Importer.getToContext(), TypeAlignment)
-                  InjectedClassNameType(D, *ToInjTypeOrErr), 0);
+                  InjectedClassNameType(*ToDeclOrErr, *ToInjTypeOrErr), 0);
 }
 
 ExpectedType ASTNodeImporter::VisitRecordType(const RecordType *T) {
-  RecordDecl *ToDecl
-    = dyn_cast_or_null<RecordDecl>(Importer.Import(T->getDecl()));
-  if (!ToDecl)
-    return make_error<ImportError>();
+  Expected<RecordDecl *> ToDeclOrErr = import(T->getDecl());
+  if (!ToDeclOrErr)
+    return ToDeclOrErr.takeError();
 
-  return Importer.getToContext().getTagDeclType(ToDecl);
+  return Importer.getToContext().getTagDeclType(*ToDeclOrErr);
 }
 
 ExpectedType ASTNodeImporter::VisitEnumType(const EnumType *T) {
-  EnumDecl *ToDecl
-    = dyn_cast_or_null<EnumDecl>(Importer.Import(T->getDecl()));
-  if (!ToDecl)
-    return make_error<ImportError>();
+  Expected<EnumDecl *> ToDeclOrErr = import(T->getDecl());
+  if (!ToDeclOrErr)
+    return ToDeclOrErr.takeError();
 
-  return Importer.getToContext().getTagDeclType(ToDecl);
+  return Importer.getToContext().getTagDeclType(*ToDeclOrErr);
 }
 
 ExpectedType ASTNodeImporter::VisitAttributedType(const AttributedType *T) {
-  auto ToModifiedTypeOrErr = Importer.Import(T->getModifiedType());
+  ExpectedType ToModifiedTypeOrErr = import(T->getModifiedType());
   if (!ToModifiedTypeOrErr)
     return ToModifiedTypeOrErr.takeError();
-  auto ToEquivalentTypeOrErr = Importer.Import(T->getEquivalentType());
+  ExpectedType ToEquivalentTypeOrErr = import(T->getEquivalentType());
   if (!ToEquivalentTypeOrErr)
     return ToEquivalentTypeOrErr.takeError();
 
@@ -1324,24 +1313,23 @@ ExpectedType ASTNodeImporter::VisitAttributedType(const AttributedType *T) {
 
 ExpectedType ASTNodeImporter::VisitTemplateTypeParmType(
     const TemplateTypeParmType *T) {
-  TemplateTypeParmDecl *ParmDecl =
-      cast_or_null<TemplateTypeParmDecl>(Importer.Import(T->getDecl()));
-  if (!ParmDecl && T->getDecl())
-    return make_error<ImportError>();
+  Expected<TemplateTypeParmDecl *> ToDeclOrErr = import(T->getDecl());
+  if (!ToDeclOrErr)
+    return ToDeclOrErr.takeError();
 
   return Importer.getToContext().getTemplateTypeParmType(
-        T->getDepth(), T->getIndex(), T->isParameterPack(), ParmDecl);
+      T->getDepth(), T->getIndex(), T->isParameterPack(), *ToDeclOrErr);
 }
 
 ExpectedType ASTNodeImporter::VisitSubstTemplateTypeParmType(
     const SubstTemplateTypeParmType *T) {
-  auto ReplacedOrErr = Importer.Import(QualType(T->getReplacedParameter(), 0));
+  ExpectedType ReplacedOrErr = import(QualType(T->getReplacedParameter(), 0));
   if (!ReplacedOrErr)
     return ReplacedOrErr.takeError();
   const TemplateTypeParmType *Replaced =
       cast<TemplateTypeParmType>((*ReplacedOrErr).getTypePtr());
 
-  auto ToReplacementTypeOrErr = Importer.Import(T->getReplacementType());
+  ExpectedType ToReplacementTypeOrErr = import(T->getReplacementType());
   if (!ToReplacementTypeOrErr)
     return ToReplacementTypeOrErr.takeError();
 
@@ -1364,7 +1352,7 @@ ExpectedType ASTNodeImporter::VisitTemplateSpecializationType(
   if (!QualType(T, 0).isCanonical()) {
     QualType FromCanonType 
       = Importer.getFromContext().getCanonicalType(QualType(T, 0));
-    if (auto TyOrErr = Importer.Import(FromCanonType))
+    if (ExpectedType TyOrErr = import(FromCanonType))
       ToCanonType = *TyOrErr;
     else
       return TyOrErr.takeError();
@@ -1380,7 +1368,7 @@ ExpectedType ASTNodeImporter::VisitElaboratedType(const ElaboratedType *T) {
   if (!ToQualifierOrErr)
     return ToQualifierOrErr.takeError();
 
-  auto ToNamedTypeOrErr = Importer.Import(T->getNamedType());
+  ExpectedType ToNamedTypeOrErr = Importer.Import(T->getNamedType());
   if (!ToNamedTypeOrErr)
     return ToNamedTypeOrErr.takeError();
 
@@ -1391,28 +1379,28 @@ ExpectedType ASTNodeImporter::VisitElaboratedType(const ElaboratedType *T) {
 
 ExpectedType
 ASTNodeImporter::VisitDependentNameType(const DependentNameType *T) {
-  auto NNSOrErr = Importer.Import(T->getQualifier());
-  if (!NNSOrErr)
-    return NNSOrErr.takeError();
+  auto ToQualifierOrErr = import(T->getQualifier());
+  if (!ToQualifierOrErr)
+    return ToQualifierOrErr.takeError();
 
   IdentifierInfo *Name = Importer.Import(T->getIdentifier());
 
   QualType Canon;
   if (T != T->getCanonicalTypeInternal().getTypePtr()) {
-    if (auto TyOrErr = Importer.Import(T->getCanonicalTypeInternal()))
+    if (ExpectedType TyOrErr = import(T->getCanonicalTypeInternal()))
       Canon = (*TyOrErr).getCanonicalType();
     else
       return TyOrErr.takeError();
   }
 
   return Importer.getToContext().getDependentNameType(T->getKeyword(),
-                                                      *NNSOrErr,
+                                                      *ToQualifierOrErr,
                                                       Name, Canon);
 }
 
 ExpectedType
 ASTNodeImporter::VisitPackExpansionType(const PackExpansionType *T) {
-  auto ToPatternOrErr = Importer.Import(T->getPattern());
+  ExpectedType ToPatternOrErr = import(T->getPattern());
   if (!ToPatternOrErr)
     return ToPatternOrErr.takeError();
 
@@ -1422,11 +1410,11 @@ ASTNodeImporter::VisitPackExpansionType(const PackExpansionType *T) {
 
 ExpectedType ASTNodeImporter::VisitDependentTemplateSpecializationType(
     const DependentTemplateSpecializationType *T) {
-  auto QualifierOrErr = Importer.Import(T->getQualifier());
-  if (!QualifierOrErr)
-    return QualifierOrErr.takeError();
+  auto ToQualifierOrErr = import(T->getQualifier());
+  if (!ToQualifierOrErr)
+    return ToQualifierOrErr.takeError();
 
-  IdentifierInfo *Name = Importer.Import(T->getIdentifier());
+  IdentifierInfo *ToName = Importer.Import(T->getIdentifier());
 
   SmallVector<TemplateArgument, 2> ToPack;
   ToPack.reserve(T->getNumArgs());
@@ -1435,27 +1423,26 @@ ExpectedType ASTNodeImporter::VisitDependentTemplateSpecializationType(
     return std::move(Err);
 
   return Importer.getToContext().getDependentTemplateSpecializationType(
-        T->getKeyword(), *QualifierOrErr, Name, ToPack);
+      T->getKeyword(), *ToQualifierOrErr, ToName, ToPack);
 }
 
 ExpectedType
 ASTNodeImporter::VisitObjCInterfaceType(const ObjCInterfaceType *T) {
-  ObjCInterfaceDecl *Class
-    = dyn_cast_or_null<ObjCInterfaceDecl>(Importer.Import(T->getDecl()));
-  if (!Class)
-    return make_error<ImportError>();
+  Expected<ObjCInterfaceDecl *> ToDeclOrErr = import(T->getDecl());
+  if (!ToDeclOrErr)
+    return ToDeclOrErr.takeError();
 
-  return Importer.getToContext().getObjCInterfaceType(Class);
+  return Importer.getToContext().getObjCInterfaceType(*ToDeclOrErr);
 }
 
 ExpectedType ASTNodeImporter::VisitObjCObjectType(const ObjCObjectType *T) {
-  auto ToBaseTypeOrErr = Importer.Import(T->getBaseType());
+  ExpectedType ToBaseTypeOrErr = Importer.Import(T->getBaseType());
   if (!ToBaseTypeOrErr)
     return ToBaseTypeOrErr.takeError();
 
   SmallVector<QualType, 4> TypeArgs;
   for (auto TypeArg : T->getTypeArgsAsWritten()) {
-    if (auto TyOrErr = Importer.Import(TypeArg))
+    if (ExpectedType TyOrErr = import(TypeArg))
       TypeArgs.push_back(*TyOrErr);
     else
       return TyOrErr.takeError();
@@ -1463,11 +1450,11 @@ ExpectedType ASTNodeImporter::VisitObjCObjectType(const ObjCObjectType *T) {
 
   SmallVector<ObjCProtocolDecl *, 4> Protocols;
   for (auto *P : T->quals()) {
-    ObjCProtocolDecl *Protocol
-      = dyn_cast_or_null<ObjCProtocolDecl>(Importer.Import(P));
-    if (!Protocol)
-      return make_error<ImportError>();
-    Protocols.push_back(Protocol);
+    if (Expected<ObjCProtocolDecl *> ProtocolOrErr = import(P))
+      Protocols.push_back(*ProtocolOrErr);
+    else
+      return ProtocolOrErr.takeError();
+    
   }
 
   return Importer.getToContext().getObjCObjectType(*ToBaseTypeOrErr, TypeArgs,
@@ -1477,7 +1464,7 @@ ExpectedType ASTNodeImporter::VisitObjCObjectType(const ObjCObjectType *T) {
 
 ExpectedType
 ASTNodeImporter::VisitObjCObjectPointerType(const ObjCObjectPointerType *T) {
-  auto ToPointeeTypeOrErr = Importer.Import(T->getPointeeType());
+  ExpectedType ToPointeeTypeOrErr = import(T->getPointeeType());
   if (!ToPointeeTypeOrErr)
     return ToPointeeTypeOrErr.takeError();
 

@@ -237,7 +237,10 @@ void ExternalASTMerger::CompleteType(TagDecl *Tag) {
     if (!SourceTag->getDefinition())
       return false;
     Forward.MapImported(SourceTag, Tag);
-    Forward.ImportDefinition(SourceTag);
+    llvm::Error Err = Forward.ImportDefinition(SourceTag);
+    if (Err)
+      // FIXME: How to handle the errors?
+      llvm::consumeError(std::move(Err));
     Tag->setCompleteDefinition(SourceTag->isCompleteDefinition());
     return true;
   });
@@ -256,7 +259,10 @@ void ExternalASTMerger::CompleteType(ObjCInterfaceDecl *Interface) {
         if (!SourceInterface->getDefinition())
           return false;
         Forward.MapImported(SourceInterface, Interface);
-        Forward.ImportDefinition(SourceInterface);
+        llvm::Error Err = Forward.ImportDefinition(SourceInterface);
+        if (Err)
+          // FIXME: How to handle the errors?
+          llvm::consumeError(std::move(Err));
         return true;
       });
 }

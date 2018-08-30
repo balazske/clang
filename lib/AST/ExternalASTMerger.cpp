@@ -420,7 +420,12 @@ bool ExternalASTMerger::FindExternalVisibleDeclsByName(const DeclContext *DC,
   for (const Candidate &C : Candidates) {
     Decl *LookupRes = C.first.get();
     ASTImporter *Importer = C.second;
-    NamedDecl *ND = cast_or_null<NamedDecl>(Importer->Import(LookupRes));
+    llvm::Expected<Decl *> ImportRes = Importer->Import(LookupRes);
+    if (!ImportRes) {
+      // FIXME: Correct error handling?
+      assert(false);
+    }
+    NamedDecl *ND = cast_or_null<NamedDecl>(*ImportRes);
     assert(ND);
     // If we don't import specialization, they are not available via lookup
     // because the lookup result is imported TemplateDecl and it does not
@@ -442,7 +447,11 @@ void ExternalASTMerger::FindExternalLexicalDecls(
                             Source<const DeclContext *> SourceDC) -> bool {
     for (const Decl *SourceDecl : SourceDC.get()->decls()) {
       if (IsKindWeWant(SourceDecl->getKind())) {
-        Decl *ImportedDecl = Forward.Import(const_cast<Decl *>(SourceDecl));
+        Decl *ImportedDecl = nullptr;
+        if (llvm::Error Err = Forward.importInto(
+            ImportedDecl, const_cast<Decl *>(SourceDecl)))
+          // FIXME: Correct error handling?
+          llvm::consumeError(std::move(Err));
         assert(!ImportedDecl || IsSameDC(ImportedDecl->getDeclContext(), DC));
         (void)ImportedDecl;
       }

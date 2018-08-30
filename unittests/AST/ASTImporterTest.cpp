@@ -84,19 +84,21 @@ class TestImportBase : public ParameterizedTestsFixture {
     createVirtualFileIfNeeded(To, FromFileName,
                               From->getBufferForFile(FromFileName));
 
-    auto Imported = Importer.Import(Node);
+    if (auto Imported = Importer.Import(Node)) {
+      // This should dump source locations and assert if some source locations
+      // were not imported.
+      SmallString<1024> ImportChecker;
+      llvm::raw_svector_ostream ToNothing(ImportChecker);
+      ToCtx.getTranslationUnitDecl()->print(ToNothing);
 
-    // This should dump source locations and assert if some source locations
-    // were not imported.
-    SmallString<1024> ImportChecker;
-    llvm::raw_svector_ostream ToNothing(ImportChecker);
-    ToCtx.getTranslationUnitDecl()->print(ToNothing);
-
-    // This traverses the AST to catch certain bugs like poorly or not
-    // implemented subtrees.
-    Imported->dump(ToNothing);
-
-    return Imported;
+      // This traverses the AST to catch certain bugs like poorly or not
+      // implemented subtrees.
+      (*Imported)->dump(ToNothing);
+      return *Imported;
+    } else {
+      llvm::consumeError(Imported.takeError());
+      return nullptr;
+    }
   }
 
   template <typename NodeType>
@@ -136,7 +138,7 @@ class TestImportBase : public ParameterizedTestsFixture {
 
     auto Imported = importNode(FromAST.get(), ToAST.get(), Importer, ToImport);
     if (!Imported)
-      return testing::AssertionFailure() << "Import failed, nullptr returned!";
+      return testing::AssertionFailure() << "Import failed!";
 
     return Verifier.match(Imported, WrapperMatcher);
   }
@@ -315,7 +317,12 @@ class ASTImporterTestBase : public ParameterizedTestsFixture {
 
     Decl *import(ASTUnit *ToAST, Decl *FromDecl) {
       lazyInitImporter(ToAST);
-      return Importer->Import(FromDecl);
+      llvm::Expected<Decl *> ToDecl = Importer->Import(FromDecl);
+      if (!ToDecl) {
+        llvm::consumeError(ToDecl.takeError());
+        return nullptr;
+      }
+      return *ToDecl;
     }
 
     llvm::Expected<QualType> import(ASTUnit *ToAST, QualType FromType) {
@@ -1009,9 +1016,7 @@ TEST_P(ASTImporterTestBase, ImportRecordTypeInFunc) {
   auto ToType =
       ImportType(FromVar->getType().getCanonicalType(), FromVar, Lang_C);
   llvm::Error Err = ToType.takeError();
-  EXPECT_TRUE(Err.operator bool());
-  // FIXME: Verify correct error code.
-  handleAllErrors(std::move(Err), [](const ImportError &IErr) {});
+  EXPECT_FALSE(Err.operator bool());
 }
 
 TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams) {

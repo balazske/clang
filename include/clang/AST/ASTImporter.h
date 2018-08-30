@@ -55,8 +55,11 @@ namespace clang {
 
     static char ID;
 
-    ImportError() : Error(Unknown) {}
-    ImportError(ErrorKind Error) : Error(Error) {}
+    ImportError() : Error(Unknown) { }
+    ImportError(const ImportError &Other) : Error(Other.Error) { }
+    ImportError(ErrorKind Error) : Error(Error) { }
+
+    std::string getMessage() const;
 
     void log(raw_ostream &OS) const override;
     std::error_code convertToErrorCode() const override;
@@ -164,7 +167,7 @@ namespace clang {
     template <typename ImportT>
     LLVM_NODISCARD llvm::Error importInto(ImportT &To, const ImportT &From) {
       auto ToOrErr = Import(From);
-      auto Err = ToOrErr.takeError();
+      llvm::Error Err = ToOrErr.takeError();
       if (!Err)
         To = *ToOrErr;
       return Err;
@@ -191,10 +194,8 @@ namespace clang {
     /// "to" context.
     ///
     /// \returns the equivalent declaration in the "to" context, or error.
-    //Expected<Decl *> Import(Decl *FromD);
-    //Expected<Decl *> Import(const Decl *FromD);
-    Decl *Import(Decl *FromD);
-    Decl *Import(const Decl *FromD);
+    Expected<Decl *> Import(Decl *FromD);
+    Expected<Decl *> Import(const Decl *FromD);
 
     /// \brief Return the copy of the given declaration in the "to" context if
     /// it has already been imported from the "from" context.  Otherwise return
@@ -210,21 +211,19 @@ namespace clang {
     ///
     /// \returns the equivalent declaration context in the "to"
     /// context, or error value.
-    llvm::Expected<DeclContext *> ImportContext(DeclContext *FromDC);
+    Expected<DeclContext *> ImportContext(DeclContext *FromDC);
     
     /// \brief Import the given expression from the "from" context into the
     /// "to" context.
     ///
     /// \returns the equivalent expression in the "to" context, or error.
-    //Expected<Expr *> Import(Expr *FromE);
-    Expr *Import(Expr *FromE);
+    Expected<Expr *> Import(Expr *FromE);
 
     /// \brief Import the given statement from the "from" context into the
     /// "to" context.
     ///
     /// \returns the equivalent statement in the "to" context, or error.
-    //Expected<Stmt *> Import(Stmt *FromS);
-    Stmt *Import(Stmt *FromS);
+    Expected<Stmt *> Import(Stmt *FromS);
 
     /// \brief Import the given nested-name-specifier from the "from"
     /// context into the "to" context.

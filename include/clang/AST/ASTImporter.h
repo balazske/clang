@@ -296,7 +296,7 @@ namespace clang {
 
     /// \brief Import the definition of the given declaration, including all of
     /// the declarations it contains.
-    llvm::Error ImportDefinition(Decl *From);
+    LLVM_NODISCARD llvm::Error ImportDefinition(Decl *From);
 
     /// \brief Cope with a name conflict when importing a declaration into the
     /// given context.

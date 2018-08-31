@@ -28,8 +28,6 @@
 
 namespace clang {
 
-  // FIXME: replace make_error<ImportError>() with correct error
-
   using llvm::make_error;
   using llvm::Error;
   using llvm::Expected;
@@ -533,9 +531,8 @@ namespace clang {
     ExpectedStmt VisitCXXTypeidExpr(CXXTypeidExpr *E);
 
 
-    // FIXME: Rename and use this instead of ImportArrayChecked.
     template<typename IIter, typename OIter>
-    Error ImportArrayCheckedNew(IIter Ibegin, IIter Iend, OIter Obegin) {
+    Error ImportArrayChecked(IIter Ibegin, IIter Iend, OIter Obegin) {
       typedef typename std::remove_reference<decltype(*Obegin)>::type ItemT;
       for (; Ibegin != Iend; ++Ibegin, ++Obegin) {
         Expected<ItemT> ToOrErr = import(*Ibegin);
@@ -550,18 +547,17 @@ namespace clang {
     // If error occurs, stops at first error and returns the error.
     // The output container should have space for all needed elements (it is not
     // expanded, new items are put into from the beginning).
-    // FIXME: Rename and use this instead of ImportContainerChecked.
     template<typename InContainerTy, typename OutContainerTy>
-    Error ImportContainerCheckedNew(
+    Error ImportContainerChecked(
         const InContainerTy &InContainer, OutContainerTy &OutContainer) {
-      return ImportArrayCheckedNew(
+      return ImportArrayChecked(
           InContainer.begin(), InContainer.end(), OutContainer.begin());
     }
 
     // FIXME: Rename and use this instead of ImportArrayChecked.
     template<typename InContainerTy, typename OIter>
-    Error ImportArrayCheckedNew(const InContainerTy &InContainer, OIter Obegin) {
-      return ImportArrayCheckedNew(InContainer.begin(), InContainer.end(), Obegin);
+    Error ImportArrayChecked(const InContainerTy &InContainer, OIter Obegin) {
+      return ImportArrayChecked(InContainer.begin(), InContainer.end(), Obegin);
     }
 
     void ImportOverrides(CXXMethodDecl *ToMethod, CXXMethodDecl *FromMethod);
@@ -630,7 +626,7 @@ template <>
 Expected<TemplateParameterList *>
 ASTNodeImporter::import(TemplateParameterList *From) {
   SmallVector<NamedDecl *, 4> To(From->size());
-  if (Error Err = ImportContainerCheckedNew(*From, To))
+  if (Error Err = ImportContainerChecked(*From, To))
     return std::move(Err);
 
   ExpectedExpr ToRequiresClause = import(From->getRequiresClause());
@@ -1827,7 +1823,7 @@ Error ASTNodeImporter::ImportDefinition(
 Expected<TemplateParameterList *> ASTNodeImporter::ImportTemplateParameterList(
     TemplateParameterList *Params) {
   SmallVector<NamedDecl *, 4> ToParams(Params->size());
-  if (Error Err = ImportContainerCheckedNew(*Params, ToParams))
+  if (Error Err = ImportContainerChecked(*Params, ToParams))
     return std::move(Err);
 
   Expr *ToRequiresClause;
@@ -3078,7 +3074,7 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
     if (unsigned NumInitializers = FromConstructor->getNumCtorInitializers()) {
       SmallVector<CXXCtorInitializer *, 4> CtorInitializers(NumInitializers);
       // Import first, then allocate memory and copy if there was no error.
-      if (Error Err = ImportContainerCheckedNew(
+      if (Error Err = ImportContainerChecked(
           FromConstructor->inits(), CtorInitializers))
         return std::move(Err);
       CXXCtorInitializer **Memory =
@@ -3877,7 +3873,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
   SmallVector<SourceLocation, 12> FromSelLocs;
   D->getSelectorLocs(FromSelLocs);
   SmallVector<SourceLocation, 12> ToSelLocs(FromSelLocs.size());
-  if (Error Err = ImportContainerCheckedNew(FromSelLocs, ToSelLocs))
+  if (Error Err = ImportContainerChecked(FromSelLocs, ToSelLocs))
     return std::move(Err);
 
   ToMethod->setMethodParams(Importer.getToContext(), ToParams, ToSelLocs);
@@ -5579,10 +5575,10 @@ ExpectedStmt ASTNodeImporter::VisitGCCAsmStmt(GCCAsmStmt *S) {
   }
 
   SmallVector<Expr *, 4> Exprs(S->getNumOutputs() + S->getNumInputs());
-  if (Error Err = ImportContainerCheckedNew(S->outputs(), Exprs))
+  if (Error Err = ImportContainerChecked(S->outputs(), Exprs))
     return std::move(Err);
 
-  if (Error Err = ImportArrayCheckedNew(
+  if (Error Err = ImportArrayChecked(
       S->inputs(), Exprs.begin() + S->getNumOutputs()))
     return std::move(Err);
 
@@ -5635,7 +5631,7 @@ ExpectedStmt ASTNodeImporter::VisitNullStmt(NullStmt *S) {
 ExpectedStmt ASTNodeImporter::VisitCompoundStmt(CompoundStmt *S) {
   llvm::SmallVector<Stmt *, 8> ToStmts(S->size());
 
-  if (Error Err = ImportContainerCheckedNew(S->body(), ToStmts))
+  if (Error Err = ImportContainerChecked(S->body(), ToStmts))
     return std::move(Err);
 
   ExpectedSLoc ToLBracLocOrErr = import(S->getLBracLoc());
@@ -6163,48 +6159,6 @@ ExpectedStmt ASTNodeImporter::VisitImplicitValueInitExpr(ImplicitValueInitExpr *
   return new (Importer.getToContext()) ImplicitValueInitExpr(*TypeOrErr);
 }
 
-/*
-Expected<ASTNodeImporter::Designator>
-ASTNodeImporter::ImportDesignator(const Designator &D) {
-  if (D.isFieldDesignator()) {
-    IdentifierInfo *ToFieldName = Importer.Import(D.getFieldName());
-    if (!ToFieldName)
-      return make_error<ImportError>();
-
-    auto ToDotLocOrErr = Importer.Import(D.getDotLoc());
-    if (!ToDotLocOrErr)
-      return std::move(ToDotLocOrErr.takeError());
-
-    auto ToFieldLocOrErr = Importer.Import(D.getFieldLoc());
-    if (!ToFieldLocOrErr)
-      return std::move(ToFieldLocOrErr.takeError());
-
-    return Designator(ToFieldName, *ToDotLocOrErr, *ToFieldLocOrErr);
-  }
-
-  auto ToLBracketLocOrErr = Importer.Import(D.getLBracketLoc());
-  if (!ToLBracketLocOrErr)
-    return std::move(ToLBracketLocOrErr.takeError());
-
-  auto ToRBracketLocOrErr = Importer.Import(D.getRBracketLoc());
-  if (!ToRBracketLocOrErr)
-    return std::move(ToRBracketLocOrErr.takeError());
-
-  if (D.isArrayDesignator())
-    return Designator(D.getFirstExprIndex(),
-                      *ToLBracketLocOrErr, *ToRBracketLocOrErr);
-
-  auto ToEllipsisLocOrErr = Importer.Import(D.getEllipsisLoc());
-  if (!ToEllipsisLocOrErr)
-    return ToEllipsisLocOrErr.takeError();
-
-  assert(D.isArrayRangeDesignator());
-  return Designator(D.getFirstExprIndex(),
-                    *ToLBracketLocOrErr, *ToEllipsisLocOrErr,
-                    *ToRBracketLocOrErr);
-}
-*/
-
 ExpectedStmt ASTNodeImporter::VisitDesignatedInitExpr(DesignatedInitExpr *E) {
   ExpectedExpr ToInitOrErr = import(E->getInit());
   if (!ToInitOrErr)
@@ -6224,7 +6178,7 @@ ExpectedStmt ASTNodeImporter::VisitDesignatedInitExpr(DesignatedInitExpr *E) {
   }
 
   SmallVector<Designator, 4> ToDesignators(E->size());
-  if (Error Err = ImportContainerCheckedNew(E->designators(), ToDesignators))
+  if (Error Err = ImportContainerChecked(E->designators(), ToDesignators))
     return std::move(Err);
 
   return DesignatedInitExpr::Create(
@@ -6307,7 +6261,7 @@ ExpectedStmt ASTNodeImporter::VisitStringLiteral(StringLiteral *E) {
     return ToTypeOrErr.takeError();
 
   SmallVector<SourceLocation, 4> ToLocations(E->getNumConcatenated());
-  if (Error Err = ImportArrayCheckedNew(
+  if (Error Err = ImportArrayChecked(
       E->tokloc_begin(), E->tokloc_end(), ToLocations.begin()))
     return std::move(Err);
 
@@ -6344,7 +6298,7 @@ ExpectedStmt ASTNodeImporter::VisitAtomicExpr(AtomicExpr *E) {
   std::tie(ToBuiltinLoc, ToType, ToRParenLoc) = *Imp;
 
   SmallVector<Expr *, 6> ToExprs(E->getNumSubExprs());
-  if (Error Err = ImportArrayCheckedNew(
+  if (Error Err = ImportArrayChecked(
       E->getSubExprs(), E->getSubExprs() + E->getNumSubExprs(),
       ToExprs.begin()))
     return std::move(Err);
@@ -6383,7 +6337,7 @@ ExpectedStmt ASTNodeImporter::VisitParenExpr(ParenExpr *E) {
 
 ExpectedStmt ASTNodeImporter::VisitParenListExpr(ParenListExpr *E) {
   SmallVector<Expr *, 4> ToExprs(E->getNumExprs());
-  if (Error Err = ImportContainerCheckedNew(E->exprs(), ToExprs))
+  if (Error Err = ImportContainerChecked(E->exprs(), ToExprs))
     return std::move(Err);
 
   ExpectedSLoc ToLParenLocOrErr = import(E->getLParenLoc());
@@ -6890,7 +6844,7 @@ ASTNodeImporter::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *E) {
   std::tie(ToConstructor, ToType, ToTypeSourceInfo, ToParenOrBraceRange) = *Imp;
 
   SmallVector<Expr *, 8> ToArgs(E->getNumArgs());
-  if (Error Err = ImportContainerCheckedNew(E->arguments(), ToArgs))
+  if (Error Err = ImportContainerChecked(E->arguments(), ToArgs))
     return std::move(Err);
 
   return new (Importer.getToContext()) CXXTemporaryObjectExpr(
@@ -6984,7 +6938,7 @@ ExpectedStmt ASTNodeImporter::VisitCXXNewExpr(CXXNewExpr *E) {
 
   SmallVector<Expr *, 4> ToPlacementArgs(E->getNumPlacementArgs());
   if (Error Err =
-      ImportContainerCheckedNew(E->placement_arguments(), ToPlacementArgs))
+      ImportContainerChecked(E->placement_arguments(), ToPlacementArgs))
     return std::move(Err);
 
   return new (Importer.getToContext()) CXXNewExpr(
@@ -7027,7 +6981,7 @@ ExpectedStmt ASTNodeImporter::VisitCXXConstructExpr(CXXConstructExpr *E) {
   std::tie(ToType, ToLocation, ToConstructor, ToParenOrBraceRange) = *Imp;
 
   SmallVector<Expr *, 6> ToArgs(E->getNumArgs());
-  if (Error Err = ImportContainerCheckedNew(E->arguments(), ToArgs))
+  if (Error Err = ImportContainerChecked(E->arguments(), ToArgs))
     return std::move(Err);
 
   return CXXConstructExpr::Create(
@@ -7044,7 +6998,7 @@ ExpectedStmt ASTNodeImporter::VisitExprWithCleanups(ExprWithCleanups *E) {
     return ToSubExprOrErr.takeError();
 
   SmallVector<ExprWithCleanups::CleanupObject, 8> ToObjects(E->getNumObjects());
-  if (Error Err = ImportContainerCheckedNew(E->getObjects(), ToObjects))
+  if (Error Err = ImportContainerChecked(E->getObjects(), ToObjects))
     return std::move(Err);
 
   return ExprWithCleanups::Create(
@@ -7064,7 +7018,7 @@ ExpectedStmt ASTNodeImporter::VisitCXXMemberCallExpr(CXXMemberCallExpr *E) {
   std::tie(ToCallee, ToType, ToRParenLoc) = *Imp;
 
   SmallVector<Expr *, 4> ToArgs(E->getNumArgs());
-  if (Error Err = ImportContainerCheckedNew(E->arguments(), ToArgs))
+  if (Error Err = ImportContainerChecked(E->arguments(), ToArgs))
     return std::move(Err);
 
   return new (Importer.getToContext()) CXXMemberCallExpr(
@@ -7335,7 +7289,7 @@ ExpectedStmt ASTNodeImporter::VisitCXXUnresolvedConstructExpr(
 
   llvm::SmallVector<Expr *, 8> ToArgs(E->arg_size());
   if (Error Err =
-      ImportArrayCheckedNew(E->arg_begin(), E->arg_end(), ToArgs.begin()))
+      ImportArrayChecked(E->arg_begin(), E->arg_end(), ToArgs.begin()))
     return std::move(Err);
 
   return CXXUnresolvedConstructExpr::Create(
@@ -7404,7 +7358,7 @@ ExpectedStmt ASTNodeImporter::VisitCallExpr(CallExpr *E) {
 
   unsigned NumArgs = E->getNumArgs();
   llvm::SmallVector<Expr *, 2> ToArgs(NumArgs);
-  if (Error Err = ImportContainerCheckedNew(E->arguments(), ToArgs))
+  if (Error Err = ImportContainerChecked(E->arguments(), ToArgs))
      return std::move(Err);
 
   // FIXME: Why is this copy needed?
@@ -7459,7 +7413,7 @@ ExpectedStmt ASTNodeImporter::VisitLambdaExpr(LambdaExpr *E) {
   }
 
   SmallVector<Expr *, 8> ToCaptureInits(E->capture_size());
-  if (Error Err = ImportContainerCheckedNew(E->capture_inits(), ToCaptureInits))
+  if (Error Err = ImportContainerChecked(E->capture_inits(), ToCaptureInits))
     return std::move(Err);
 
   auto Imp = importSeq(
@@ -7489,7 +7443,7 @@ ExpectedStmt ASTNodeImporter::VisitInitListExpr(InitListExpr *E) {
   std::tie(ToLBraceLoc, ToRBraceLoc, ToType) = *Imp;
 
   llvm::SmallVector<Expr *, 4> ToExprs(E->getNumInits());
-  if (Error Err = ImportContainerCheckedNew(E->inits(), ToExprs))
+  if (Error Err = ImportContainerChecked(E->inits(), ToExprs))
     return std::move(Err);
 
   ASTContext &ToCtx = Importer.getToContext();
@@ -7660,7 +7614,7 @@ ExpectedStmt ASTNodeImporter::VisitTypeTraitExpr(TypeTraitExpr *E) {
   std::tie(ToType, ToLocStart, ToLocEnd) = *Imp;
 
   SmallVector<TypeSourceInfo *, 4> ToArgs(E->getNumArgs());
-  if (Error Err = ImportContainerCheckedNew(E->getArgs(), ToArgs))
+  if (Error Err = ImportContainerChecked(E->getArgs(), ToArgs))
     return std::move(Err);
 
   // According to Sema::BuildTypeTrait(), if E is value-dependent,
@@ -7821,6 +7775,15 @@ Expected<Decl *> ASTImporter::Import(Decl *FromD) {
   // Import the declaration.
   ExpectedDecl ToDOrErr = Importer.Visit(FromD);
   if (ToDOrErr) {
+    // FIXME: This is a temporary check to handle the "already imported with
+    // error" case. We can get here nullptr only if GetImportedOrCreateDecl
+    // returned nullptr because a previously failed create was requested.
+    // Later GetImportedOrCreateDecl can be updated to return the error.
+    if (!(*ToDOrErr)) {
+      auto Err = getImportDeclErrorIfAny(FromD);
+      assert(Err);
+      return make_error<ImportError>(*Err);
+    }
     // Notify subclasses.
     // FIXME: Call this only once for the same object?
     Imported(FromD, *ToDOrErr);

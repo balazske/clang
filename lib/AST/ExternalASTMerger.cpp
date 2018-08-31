@@ -63,7 +63,6 @@ LookupSameContext(Source<TranslationUnitDecl *> SourceTU, const DeclContext *DC,
     handleAllErrors(std::move(Err), [](const ImportError&) { });
     return nullptr;
   }
-  //Source<DeclarationName> SourceName = ReverseImporter.Import(Name);
   Source<DeclarationName> SourceName = *NameOrErr;
   DeclContext::lookup_result SearchResult =
       SourceParentDC.get()->lookup(SourceName.get());

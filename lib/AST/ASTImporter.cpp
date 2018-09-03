@@ -7787,9 +7787,13 @@ Expected<Decl *> ASTImporter::Import(Decl *FromD) {
     // FIXME: Call this only once for the same object?
     Imported(FromD, *ToDOrErr);
   } else {
+    // Failed to import.
+    // Take out the existing (probably invalid) object from the mapping.
+    // FIXME: There may be remaining references to the failed object.
+    ImportedDecls.erase(FromD);
     if (!getImportDeclErrorIfAny(FromD)) {
       // Error encountered for the first time.
-      // After takeError the error is not useble any more in ToDOrErr.
+      // After takeError the error is not usable any more in ToDOrErr.
       // Get a copy of the error object (any more simple solution for this?).
       ImportError ErrOut;
       handleAllErrors(

@@ -3364,7 +3364,7 @@ ExpectedDecl ASTNodeImporter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
   // Import the type.
   auto TypeOrErr = Importer.Import(D->getType());
   if (!TypeOrErr)
-    return nullptr;
+    return TypeOrErr.takeError();
 
   NamedDecl **NamedChain =
     new (Importer.getToContext())NamedDecl*[D->getChainingSize()];
@@ -3628,8 +3628,7 @@ ExpectedDecl ASTNodeImporter::VisitVarDecl(VarDecl *D) {
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
       if (!Name) {
-        //Importer.setCurrentImportDeclError(ImportErrorKind::NameConflict);
-        return nullptr;
+        return make_error<ImportError>(ImportError::NameConflict);
       }
     }
   }
@@ -5623,7 +5622,7 @@ ExpectedStmt ASTNodeImporter::VisitDeclStmt(DeclStmt *S) {
 ExpectedStmt ASTNodeImporter::VisitNullStmt(NullStmt *S) {
   ExpectedSLoc ToSemiLocOrErr = import(S->getSemiLoc());
   if (!ToSemiLocOrErr)
-    return nullptr;
+    return ToSemiLocOrErr.takeError();
   return new (Importer.getToContext()) NullStmt(
       *ToSemiLocOrErr, S->hasLeadingEmptyMacro());
 }
@@ -6682,7 +6681,7 @@ ExpectedStmt ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
         ToTypeInfoAsWritten, ToOperatorLoc, ToRParenLoc, ToAngleBrackets);
   default:
     llvm_unreachable("Cast expression of unsupported type!");
-    return nullptr;
+    return make_error<ImportError>(ImportError::UnsupportedConstruct);
   }
 }
 

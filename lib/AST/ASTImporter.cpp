@@ -571,10 +571,10 @@ template <typename InContainerTy>
 Error ASTNodeImporter::ImportTemplateArgumentListInfo(
     SourceLocation FromLAngleLoc, SourceLocation FromRAngleLoc,
     const InContainerTy &Container, TemplateArgumentListInfo &Result) {
-  auto ToLAngleLocOrErr = Importer.Import(FromLAngleLoc);
+  auto ToLAngleLocOrErr = import(FromLAngleLoc);
   if (!ToLAngleLocOrErr)
     return ToLAngleLocOrErr.takeError();
-  auto ToRAngleLocOrErr = Importer.Import(FromRAngleLoc);
+  auto ToRAngleLocOrErr = import(FromRAngleLoc);
   if (!ToRAngleLocOrErr)
     return ToRAngleLocOrErr.takeError();
 
@@ -1284,7 +1284,7 @@ ExpectedType ASTNodeImporter::VisitSubstTemplateTypeParmType(
 
 ExpectedType ASTNodeImporter::VisitTemplateSpecializationType(
                                        const TemplateSpecializationType *T) {
-  auto ToTemplateOrErr = Importer.Import(T->getTemplateName());
+  auto ToTemplateOrErr = import(T->getTemplateName());
   if (!ToTemplateOrErr)
     return ToTemplateOrErr.takeError();
   
@@ -1309,11 +1309,11 @@ ExpectedType ASTNodeImporter::VisitTemplateSpecializationType(
 
 ExpectedType ASTNodeImporter::VisitElaboratedType(const ElaboratedType *T) {
   // Note: the qualifier in an ElaboratedType is optional.
-  auto ToQualifierOrErr = Importer.Import(T->getQualifier());
+  auto ToQualifierOrErr = import(T->getQualifier());
   if (!ToQualifierOrErr)
     return ToQualifierOrErr.takeError();
 
-  ExpectedType ToNamedTypeOrErr = Importer.Import(T->getNamedType());
+  ExpectedType ToNamedTypeOrErr = import(T->getNamedType());
   if (!ToNamedTypeOrErr)
     return ToNamedTypeOrErr.takeError();
 
@@ -1381,7 +1381,7 @@ ASTNodeImporter::VisitObjCInterfaceType(const ObjCInterfaceType *T) {
 }
 
 ExpectedType ASTNodeImporter::VisitObjCObjectType(const ObjCObjectType *T) {
-  ExpectedType ToBaseTypeOrErr = Importer.Import(T->getBaseType());
+  ExpectedType ToBaseTypeOrErr = import(T->getBaseType());
   if (!ToBaseTypeOrErr)
     return ToBaseTypeOrErr.takeError();
 
@@ -1834,13 +1834,13 @@ Expected<TemplateParameterList *> ASTNodeImporter::ImportTemplateParameterList(
     ToRequiresClause = nullptr;
   }
 
-  auto ToTemplateLocOrErr = Importer.Import(Params->getTemplateLoc());
+  auto ToTemplateLocOrErr = import(Params->getTemplateLoc());
   if (!ToTemplateLocOrErr)
     return ToTemplateLocOrErr.takeError();
-  auto ToLAngleLocOrErr = Importer.Import(Params->getLAngleLoc());
+  auto ToLAngleLocOrErr = import(Params->getLAngleLoc());
   if (!ToLAngleLocOrErr)
     return ToLAngleLocOrErr.takeError();
-  auto ToRAngleLocOrErr = Importer.Import(Params->getRAngleLoc());
+  auto ToRAngleLocOrErr = import(Params->getRAngleLoc());
   if (!ToRAngleLocOrErr)
     return ToRAngleLocOrErr.takeError();
   
@@ -2738,7 +2738,7 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
       LexicalDC->addDeclInternal(D2);
     }
 
-    if (auto QualifierLocOrErr = Importer.Import(D->getQualifierLoc()))
+    if (auto QualifierLocOrErr = import(D->getQualifierLoc()))
       D2->setQualifierInfo(*QualifierLocOrErr);
     else
       return QualifierLocOrErr.takeError();
@@ -3362,7 +3362,7 @@ ExpectedDecl ASTNodeImporter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
   }
 
   // Import the type.
-  auto TypeOrErr = Importer.Import(D->getType());
+  auto TypeOrErr = import(D->getType());
   if (!TypeOrErr)
     return TypeOrErr.takeError();
 
@@ -3861,14 +3861,6 @@ ExpectedDecl ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
     ToMethod->addDeclInternal(ToParams[I]);
   }
 
-  /*SmallVector<SourceLocation, 12> SelLocs;
-  D->getSelectorLocs(SelLocs);
-  for (SourceLocation &Loc : SelLocs) {
-    if (ExpectedSLoc LocOrErr = import(Loc))
-      SelLocs.push_back(*LocOrErr);
-    else
-      return LocOrErr.takeError();
-  }*/
   SmallVector<SourceLocation, 12> FromSelLocs;
   D->getSelectorLocs(FromSelLocs);
   SmallVector<SourceLocation, 12> ToSelLocs(FromSelLocs.size());
@@ -4087,7 +4079,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCProtocolDecl(ObjCProtocolDecl *D) {
   
   ObjCProtocolDecl *ToProto = MergeWithProtocol;
   if (!ToProto) {
-    auto ToAtStartLocOrErr = Importer.Import(D->getAtStartLoc());
+    auto ToAtStartLocOrErr = import(D->getAtStartLoc());
     if (!ToAtStartLocOrErr)
       return ToAtStartLocOrErr.takeError();
 
@@ -4464,11 +4456,11 @@ ASTNodeImporter::ImportObjCTypeParamList(ObjCTypeParamList *list) {
       return toTypeParamOrErr.takeError();
   }
 
-  auto LAngleLocOrErr = Importer.Import(list->getLAngleLoc());
+  auto LAngleLocOrErr = import(list->getLAngleLoc());
   if (!LAngleLocOrErr)
     return LAngleLocOrErr.takeError();
 
-  auto RAngleLocOrErr = Importer.Import(list->getRAngleLoc());
+  auto RAngleLocOrErr = import(list->getRAngleLoc());
   if (!RAngleLocOrErr)
     return RAngleLocOrErr.takeError();
 
@@ -6084,11 +6076,11 @@ ExpectedStmt ASTNodeImporter::VisitVAArgExpr(VAArgExpr *E) {
 
 
 ExpectedStmt ASTNodeImporter::VisitGNUNullExpr(GNUNullExpr *E) {
-  ExpectedType TypeOrErr = Importer.Import(E->getType());
+  ExpectedType TypeOrErr = import(E->getType());
   if (!TypeOrErr)
     return TypeOrErr.takeError();
 
-  ExpectedSLoc LocStartOrErr = Importer.Import(E->getLocStart());
+  ExpectedSLoc LocStartOrErr = import(E->getLocStart());
   if (!LocStartOrErr)
     return LocStartOrErr.takeError();
 
@@ -6557,7 +6549,7 @@ Expected<CXXCastPath>
 ASTNodeImporter::ImportCastPath(CastExpr *CE) {
   CXXCastPath Path;
   for (auto I = CE->path_begin(), E = CE->path_end(); I != E; ++I) {
-    if (auto SpecOrErr = Importer.Import(*I))
+    if (auto SpecOrErr = import(*I))
       Path.push_back(*SpecOrErr);
     else
       return SpecOrErr.takeError();

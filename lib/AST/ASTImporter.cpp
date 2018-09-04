@@ -7645,11 +7645,11 @@ ExpectedStmt ASTNodeImporter::VisitCXXTypeidExpr(CXXTypeidExpr *E) {
 void ASTNodeImporter::ImportOverrides(CXXMethodDecl *ToMethod,
                                       CXXMethodDecl *FromMethod) {
   for (auto *FromOverriddenMethod : FromMethod->overridden_methods()) {
-    auto ImportedOrErr = import(FromOverriddenMethod);
-    if (!ImportedOrErr)
+    if (auto ImportedOrErr = import(FromOverriddenMethod))
+      ToMethod->getCanonicalDecl()->addOverriddenMethod(cast<CXXMethodDecl>(
+          (*ImportedOrErr)->getCanonicalDecl()));
+    else
       consumeError(ImportedOrErr.takeError());
-    ToMethod->getCanonicalDecl()->addOverriddenMethod(cast<CXXMethodDecl>(
-        (*ImportedOrErr)->getCanonicalDecl()));
   }
 }
 

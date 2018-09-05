@@ -5418,10 +5418,12 @@ ExpectedDecl ASTNodeImporter::VisitVarTemplateSpecializationDecl(
         return D2;
     }
 
-    if (ExpectedSLoc POIOrErr = import(D->getPointOfInstantiation()))
-      D2->setPointOfInstantiation(*POIOrErr);
-    else
-      return POIOrErr.takeError();
+    if (D->getPointOfInstantiation().isValid()) {
+      if (ExpectedSLoc POIOrErr = import(D->getPointOfInstantiation()))
+        D2->setPointOfInstantiation(*POIOrErr);
+      else
+        return POIOrErr.takeError();
+    }
 
     D2->setSpecializationKind(D->getSpecializationKind());
     D2->setTemplateArgsInfo(ToTAInfo);

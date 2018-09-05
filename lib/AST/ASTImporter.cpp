@@ -7257,12 +7257,9 @@ ExpectedStmt ASTNodeImporter::VisitCXXDependentScopeMemberExpr(
 
   TemplateArgumentListInfo ToTAInfo, *ResInfo = nullptr;
   if (E->hasExplicitTemplateArgs()) {
-    auto ToAngleLocOrErr = importSeq(E->getLAngleLoc(), E->getRAngleLoc());
-    if (!ToAngleLocOrErr)
-      return ToAngleLocOrErr.takeError();
     if (Error Err = ImportTemplateArgumentListInfo(
-        std::get<0>(*ToAngleLocOrErr), std::get<1>(*ToAngleLocOrErr),
-        E->template_arguments(), ToTAInfo))
+        E->getLAngleLoc(), E->getRAngleLoc(), E->template_arguments(),
+        ToTAInfo))
       return std::move(Err);
     ResInfo = &ToTAInfo;
   }

@@ -167,10 +167,9 @@ namespace clang {
     template <typename ImportT>
     LLVM_NODISCARD llvm::Error importInto(ImportT &To, const ImportT &From) {
       auto ToOrErr = Import(From);
-      llvm::Error Err = ToOrErr.takeError();
-      if (!Err)
+      if (ToOrErr)
         To = *ToOrErr;
-      return Err;
+      return ToOrErr.takeError();
     }
 
     /// \brief Whether the importer will perform a minimal import, creating

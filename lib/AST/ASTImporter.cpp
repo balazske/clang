@@ -125,9 +125,8 @@ namespace clang {
     template <typename ImportT>
     LLVM_NODISCARD llvm::Error importInto(ImportT *&To, ImportT *From) {
       auto ToOrErr = Importer.Import(From);
-      if (ToOrErr) {
+      if (ToOrErr)
         To = cast_or_null<ImportT>(*ToOrErr);
-      }
       return ToOrErr.takeError();
     }
 
@@ -576,7 +575,6 @@ namespace clang {
           InContainer.begin(), InContainer.end(), OutContainer.begin());
     }
 
-    // FIXME: Rename and use this instead of ImportArrayChecked.
     template<typename InContainerTy, typename OIter>
     Error ImportArrayChecked(const InContainerTy &InContainer, OIter Obegin) {
       return ImportArrayChecked(InContainer.begin(), InContainer.end(), Obegin);
@@ -1845,7 +1843,7 @@ Error ASTNodeImporter::ImportDefinition(
   return Error::success();
 }
 
-// FIXME: Remove this, use `import` instead.
+// FIXME: Remove this, have an `import` instead?
 Expected<TemplateParameterList *> ASTNodeImporter::ImportTemplateParameterList(
     TemplateParameterList *Params) {
   SmallVector<NamedDecl *, 4> ToParams(Params->size());
@@ -7726,7 +7724,8 @@ Decl *ASTImporter::GetAlreadyImportedOrNull(Decl *FromD) {
     // FIXME: remove this call from this function
     Error Err = ASTNodeImporter(*this).ImportDefinitionIfNeeded(FromD, ToD);
     if (Err) {
-      // FIXME: handle error, at least print warning?
+      // FIXME: Do something better here.
+      consumeError(std::move(Err));
     }
     return ToD;
   } else {

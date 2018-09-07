@@ -1016,7 +1016,7 @@ TEST_P(ASTImporterTestBase, ImportRecordTypeInFunc) {
   auto ToType =
       ImportType(FromVar->getType().getCanonicalType(), FromVar, Lang_C);
   llvm::Error Err = ToType.takeError();
-  EXPECT_FALSE(Err.operator bool());
+  EXPECT_FALSE(Err);
 }
 
 TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams) {

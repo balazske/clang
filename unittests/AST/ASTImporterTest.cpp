@@ -3568,7 +3568,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentRecord) {
   EXPECT_EQ(ToR1, ToR2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
+TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentRecord) {
   Decl *ToR1;
   {
     Decl *FromTU = getTuDecl(
@@ -3589,7 +3589,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
   EXPECT_FALSE(ToR2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfEquivalentField) {
+TEST_P(ASTImporterTestBase, DISABLED_ImportOfEquivalentField) {
   Decl *ToF1;
   {
     Decl *FromTU = getTuDecl(
@@ -3609,7 +3609,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentField) {
   EXPECT_EQ(ToF1, ToF2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
+TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentField) {
   Decl *ToF1;
   {
     Decl *FromTU = getTuDecl(
@@ -3630,7 +3630,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
   EXPECT_FALSE(ToF2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfEquivalentMethod) {
+TEST_P(ASTImporterTestBase, DISABLED_ImportOfEquivalentMethod) {
   Decl *ToM1;
   {
     Decl *FromTU = getTuDecl(
@@ -3650,7 +3650,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentMethod) {
   EXPECT_EQ(ToM1, ToM2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfNonEquivalentMethod) {
+TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentMethod) {
   Decl *ToM1;
   {
     Decl *FromTU = getTuDecl(
@@ -4340,8 +4340,8 @@ INSTANTIATE_TEST_CASE_P(ParameterizedTests, CanonicalRedeclChain,
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportImplicitMethods,
                         DefaultTestValuesForRunOptions, );
 
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, CheckODRAtImport,
-                        DefaultTestValuesForRunOptions, );
+//INSTANTIATE_TEST_CASE_P(ParameterizedTests, CheckODRAtImport,
+//                        DefaultTestValuesForRunOptions, );
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportVariables,
                         DefaultTestValuesForRunOptions, );

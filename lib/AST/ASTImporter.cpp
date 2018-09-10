@@ -7722,11 +7722,9 @@ Decl *ASTImporter::GetAlreadyImportedOrNull(Decl *FromD) {
   if (Pos != ImportedDecls.end()) {
     Decl *ToD = Pos->second;
     // FIXME: remove this call from this function
-    Error Err = ASTNodeImporter(*this).ImportDefinitionIfNeeded(FromD, ToD);
-    if (Err) {
+    if (Error Err = ASTNodeImporter(*this).ImportDefinitionIfNeeded(FromD, ToD))
       // FIXME: Do something better here.
       consumeError(std::move(Err));
-    }
     return ToD;
   } else {
     return nullptr;
@@ -8449,7 +8447,8 @@ DeclarationName ASTImporter::HandleNameConflict(DeclarationName Name,
                                                 unsigned IDNS,
                                                 NamedDecl **Decls,
                                                 unsigned NumDecls) {
-  return DeclarationName();
+  //return DeclarationName();
+  return Name;
 }
 
 DiagnosticBuilder ASTImporter::ToDiag(SourceLocation Loc, unsigned DiagID) {

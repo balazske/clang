@@ -114,13 +114,8 @@ namespace clang {
     /// Counter for errors encountered during import.
     /// It can be used to detect what errors are found during import of a
     /// specific Decl, by using the counter reset and get functions.
-    /// An import is considered as failed if the import directly failed (Decl
-    /// node could not be created correctly) or if a previous import of the
-    /// Decl node has failed. It is possible that import of a Decl node is
-    /// successful but some of its "subnodes" is not successful (for example at
-    /// members of a namespace, some members can be missed because import
-    /// failure but the import of the whole namespace itself still succeeds).
-    //llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
+    /// An import of a Decl is considered as failed if the import directly failed.
+    llvm::DenseMap<int, unsigned int> ImportDeclErrorCount;
 
     /// \brief Mapping from the already-imported statements in the "from"
     /// context to the corresponding statements in the "to" context.
@@ -388,16 +383,16 @@ namespace clang {
     void setImportDeclError(Decl *From, ImportError Error);
 
     /// Get if there was any import error since last counter reset.
-    //bool hasImportErrorCount() const;
+    bool hasImportErrorCount() const;
 
     /// Get count of error type after last count reset.
-    //unsigned int getImportErrorCount(ImportErrorKind Error) const;
+    unsigned int getImportErrorCount(ImportError::ErrorKind Error) const;
 
     /// Increment count of error type.
-    //void incrementImportErrorCount(ImportErrorKind Error);
+    void incrementImportErrorCount(ImportError::ErrorKind Error);
 
     /// Reset import error counts.
-    //void resetImportErrorCount();
+    void resetImportErrorCount();
 
     /// Determine the index of a field in its parent record.
     /// F should be a field (or indirect field) declaration.

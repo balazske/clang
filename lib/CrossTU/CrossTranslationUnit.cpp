@@ -77,6 +77,15 @@ STATISTIC(NumODRErrorFound, "The # of imports when the ASTImporter "
                             "encountered ODR violation");
 STATISTIC(NumTripleMismatch, "The # of triple mismatches");
 STATISTIC(NumLangMismatch, "The # of language mismatches");
+STATISTIC(
+    NumPrimaryUnsupportedConstructs,
+    "The total count of encountered unsupported constructs at import");
+STATISTIC(
+    NumPrimaryNameConflicts,
+    "The total count of encountered name conflict errors at import");
+STATISTIC(
+    NumPrimaryUnknownErrors,
+    "The total count of encountered unknown import errors");
 
 // FIXME: This class is will be removed after the transition to llvm::Error.
 class IndexErrorCategory : public std::error_category {
@@ -356,6 +365,13 @@ CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD) {
       const_cast<FunctionDecl *>(FD));
   if (!ToDeclOrErr) {
     llvm::handleAllErrors(ToDeclOrErr.takeError(), handleImportError);
+    // Where to update these (needed once after full analysis)?
+    NumPrimaryUnsupportedConstructs =
+        Importer.getImportErrorCount(ImportError::UnsupportedConstruct);
+    NumPrimaryNameConflicts =
+        Importer.getImportErrorCount(ImportError::NameConflict);
+    NumPrimaryUnknownErrors =
+        Importer.getImportErrorCount(ImportError::Unknown);
     return nullptr;
   }
   auto *ToDecl = cast_or_null<FunctionDecl>(*ToDeclOrErr);

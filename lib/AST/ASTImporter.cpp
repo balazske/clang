@@ -1461,6 +1461,7 @@ Error ASTNodeImporter::ImportDeclParts(
       if (RT && RT->getDecl() == D) {
         Importer.FromDiag(D->getLocation(), diag::err_unsupported_ast_node)
             << D->getDeclKindName();
+        Importer.incrementImportErrorCount(ImportError::UnsupportedConstruct);
         return make_error<ImportError>(ImportError::UnsupportedConstruct);
       }
     }
@@ -2016,6 +2017,7 @@ ExpectedDecl ASTNodeImporter::VisitDecl(Decl *D) {
 ExpectedDecl ASTNodeImporter::VisitImportDecl(ImportDecl *D) {
   Importer.FromDiag(D->getLocation(), diag::err_unsupported_ast_node)
       << D->getDeclKindName();
+  Importer.incrementImportErrorCount(ImportError::UnsupportedConstruct);
   return make_error<ImportError>(ImportError::UnsupportedConstruct);
 }
 
@@ -2144,8 +2146,10 @@ ExpectedDecl ASTNodeImporter::VisitNamespaceDecl(NamespaceDecl *D) {
       Name = Importer.HandleNameConflict(Name, DC, Decl::IDNS_Namespace,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
 
@@ -2268,8 +2272,10 @@ ASTNodeImporter::VisitTypedefNameDecl(TypedefNameDecl *D, bool IsAlias) {
       Name = Importer.HandleNameConflict(Name, DC, IDNS,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
 
@@ -2347,8 +2353,10 @@ ASTNodeImporter::VisitTypeAliasTemplateDecl(TypeAliasTemplateDecl *D) {
       Name = Importer.HandleNameConflict(Name, DC, IDNS,
                                          ConflictingDecls.data(),
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
 
@@ -2460,8 +2468,10 @@ ExpectedDecl ASTNodeImporter::VisitEnumDecl(EnumDecl *D) {
       Name = Importer.HandleNameConflict(Name, DC, IDNS,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
 
@@ -2652,8 +2662,10 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
       Name = Importer.HandleNameConflict(Name, DC, IDNS,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
 
@@ -2815,8 +2827,10 @@ ExpectedDecl ASTNodeImporter::VisitEnumConstantDecl(EnumConstantDecl *D) {
       Name = Importer.HandleNameConflict(Name, DC, IDNS,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
   
@@ -3036,8 +3050,10 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
       Name = Importer.HandleNameConflict(Name, DC, IDNS,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
-      if (!Name)
+      if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
+      }
     }
   }
 
@@ -3295,6 +3311,7 @@ ExpectedDecl ASTNodeImporter::VisitFieldDecl(FieldDecl *D) {
       Importer.ToDiag(FoundField->getLocation(), diag::note_odr_value_here)
         << FoundField->getType();
 
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
     }
   }
@@ -3368,6 +3385,7 @@ ExpectedDecl ASTNodeImporter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
       Importer.ToDiag(FoundField->getLocation(), diag::note_odr_value_here)
         << FoundField->getType();
 
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
     }
   }
@@ -3504,6 +3522,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCIvarDecl(ObjCIvarDecl *D) {
       Importer.ToDiag(FoundIvar->getLocation(), diag::note_odr_value_here)
         << FoundIvar->getType();
 
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
     }
   }
@@ -3628,6 +3647,7 @@ ExpectedDecl ASTNodeImporter::VisitVarDecl(VarDecl *D) {
                                          ConflictingDecls.data(),
                                          ConflictingDecls.size());
       if (!Name) {
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
       }
     }
@@ -3788,6 +3808,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
                         diag::note_odr_objc_method_here)
           << D->isInstanceMethod() << Name;
 
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
       }
 
@@ -3800,6 +3821,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
                         diag::note_odr_objc_method_here)
           << D->isInstanceMethod() << Name;
   
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
       }
 
@@ -3816,6 +3838,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
           Importer.ToDiag((*FoundP)->getLocation(), diag::note_odr_value_here)
             << (*FoundP)->getType();
 
+          Importer.incrementImportErrorCount(ImportError::NameConflict);
           return make_error<ImportError>(ImportError::NameConflict);
         }
       }
@@ -3829,6 +3852,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
                         diag::note_odr_objc_method_here)
           << D->isInstanceMethod() << Name;
 
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
       }
 
@@ -4659,6 +4683,7 @@ ASTNodeImporter::VisitObjCImplementationDecl(ObjCImplementationDecl *D) {
         Importer.FromDiag(D->getLocation(),
                           diag::note_odr_objc_missing_superclass);
 
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
     }
   }
@@ -4695,6 +4720,7 @@ ExpectedDecl ASTNodeImporter::VisitObjCPropertyDecl(ObjCPropertyDecl *D) {
         Importer.ToDiag(FoundProp->getLocation(), diag::note_odr_value_here)
           << FoundProp->getType();
 
+        Importer.incrementImportErrorCount(ImportError::NameConflict);
         return make_error<ImportError>(ImportError::NameConflict);
       }
 
@@ -4806,6 +4832,7 @@ ASTNodeImporter::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D) {
         << D->getPropertyDecl()->getDeclName()
         << (D->getPropertyImplementation() == ObjCPropertyImplDecl::Dynamic);
 
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
     }
     
@@ -4821,6 +4848,7 @@ ASTNodeImporter::VisitObjCPropertyImplDecl(ObjCPropertyImplDecl *D) {
                         diag::note_odr_objc_synthesize_ivar_here)
         << D->getPropertyIvarDecl()->getDeclName();
 
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
     }
     
@@ -4995,8 +5023,10 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
                                          ConflictingDecls.size());
     }
     
-    if (!Name)
+    if (!Name) {
+      Importer.incrementImportErrorCount(ImportError::NameConflict);
       return make_error<ImportError>(ImportError::NameConflict);
+    }
   }
 
   CXXRecordDecl *FromTemplated = D->getTemplatedDecl();
@@ -5278,10 +5308,12 @@ ExpectedDecl ASTNodeImporter::VisitVarTemplateDecl(VarTemplateDecl *D) {
                                        ConflictingDecls.size());
   }
 
-  if (!Name)
+  if (!Name) {
     // FIXME: Is it possible to get other error than name conflict?
     // (Put this `if` into the previous `if`?)
+    Importer.incrementImportErrorCount(ImportError::NameConflict);
     return make_error<ImportError>(ImportError::NameConflict);
+  }
 
   VarDecl *DTemplated = D->getTemplatedDecl();
 
@@ -5712,9 +5744,11 @@ ExpectedStmt ASTNodeImporter::VisitAttributedStmt(AttributedStmt *S) {
       return A->clone(_ToContext);
     });
   if (std::any_of(ToAttrs.begin(), ToAttrs.end(),
-      [](const Attr *ToA) -> bool { return !ToA; }))
+      [](const Attr *ToA) -> bool { return !ToA; })) {
     // FIXME: What kind of error to return?
+    Importer.incrementImportErrorCount(ImportError::Unknown);
     return make_error<ImportError>();
+  }
 
   ExpectedStmt ToSubStmtOrErr = import(S->getSubStmt());
   if (!ToSubStmtOrErr)
@@ -6687,6 +6721,7 @@ ExpectedStmt ASTNodeImporter::VisitExplicitCastExpr(ExplicitCastExpr *E) {
         ToTypeInfoAsWritten, ToOperatorLoc, ToRParenLoc, ToAngleBrackets);
   default:
     llvm_unreachable("Cast expression of unsupported type!");
+    Importer.incrementImportErrorCount(ImportError::UnsupportedConstruct);
     return make_error<ImportError>(ImportError::UnsupportedConstruct);
   }
 }
@@ -8199,6 +8234,7 @@ Expected<FileID> ASTImporter::Import(FileID FromID) {
     if (!Entry) {
       // FIXME: Is this an error?
       // FIXME: What kind of error?
+      incrementImportErrorCount(ImportError::Unknown);
       return make_error<ImportError>();
     }
     ToID = ToSM.createFileID(Entry, ToIncludeLoc, 
@@ -8279,6 +8315,7 @@ Expected<CXXCtorInitializer *> ASTImporter::Import(CXXCtorInitializer *From) {
                            *ToExprOrErr, *RParenLocOrErr);
   } else {
     // FIXME: assert ?
+    incrementImportErrorCount(ImportError::Unknown);
     return make_error<ImportError>();
   }
 }
@@ -8447,8 +8484,8 @@ DeclarationName ASTImporter::HandleNameConflict(DeclarationName Name,
                                                 unsigned IDNS,
                                                 NamedDecl **Decls,
                                                 unsigned NumDecls) {
-  //return DeclarationName();
-  return Name;
+  return DeclarationName();
+  //return Name;
 }
 
 DiagnosticBuilder ASTImporter::ToDiag(SourceLocation Loc, unsigned DiagID) {
@@ -8526,18 +8563,19 @@ void ASTImporter::setImportDeclError(Decl *From, ImportError Error) {
   ImportDeclErrors[From] = Error;
 }
 
-//unsigned int ASTImporter::getImportErrorCount(ImportErrorKind Error) const {
-//  return ImportDeclErrorCount.lookup(static_cast<int>(Error));
-//}
-//
-//void ASTImporter::incrementImportErrorCount(ImportErrorKind Error) {
-//  ImportDeclErrorCount[static_cast<int>(Error)]++;
-//}
-//
-//bool ASTImporter::hasImportErrorCount() const {
-//  return ImportDeclErrorCount.size() > 0;
-//}
-//
-//void ASTImporter::resetImportErrorCount() {
-//  ImportDeclErrorCount.clear();
-//}
+unsigned int
+ASTImporter::getImportErrorCount(ImportError::ErrorKind Error) const {
+  return ImportDeclErrorCount.lookup(Error);
+}
+
+void ASTImporter::incrementImportErrorCount(ImportError::ErrorKind Error) {
+  ImportDeclErrorCount[Error]++;
+}
+
+bool ASTImporter::hasImportErrorCount() const {
+  return ImportDeclErrorCount.size() > 0;
+}
+
+void ASTImporter::resetImportErrorCount() {
+  ImportDeclErrorCount.clear();
+}

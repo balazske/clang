@@ -79,13 +79,13 @@ STATISTIC(NumTripleMismatch, "The # of triple mismatches");
 STATISTIC(NumLangMismatch, "The # of language mismatches");
 STATISTIC(
     NumPrimaryUnsupportedConstructs,
-    "The total count of encountered unsupported constructs at import");
+    "The # of unsupported constructs at import");
 STATISTIC(
     NumPrimaryNameConflicts,
-    "The total count of encountered name conflict errors at import");
+    "The # of name conflicts at import");
 STATISTIC(
     NumPrimaryUnknownErrors,
-    "The total count of encountered unknown import errors");
+    "The # of other import errors");
 
 // FIXME: This class is will be removed after the transition to llvm::Error.
 class IndexErrorCategory : public std::error_category {

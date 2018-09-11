@@ -3568,7 +3568,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentRecord) {
   EXPECT_EQ(ToR1, ToR2);
 }
 
-TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentRecord) {
+TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
   Decl *ToR1;
   {
     Decl *FromTU = getTuDecl(
@@ -3589,7 +3589,7 @@ TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentRecord) {
   EXPECT_FALSE(ToR2);
 }
 
-TEST_P(ASTImporterTestBase, DISABLED_ImportOfEquivalentField) {
+TEST_P(ASTImporterTestBase, ImportOfEquivalentField) {
   Decl *ToF1;
   {
     Decl *FromTU = getTuDecl(
@@ -3609,7 +3609,7 @@ TEST_P(ASTImporterTestBase, DISABLED_ImportOfEquivalentField) {
   EXPECT_EQ(ToF1, ToF2);
 }
 
-TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentField) {
+TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
   Decl *ToF1;
   {
     Decl *FromTU = getTuDecl(
@@ -3630,7 +3630,7 @@ TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentField) {
   EXPECT_FALSE(ToF2);
 }
 
-TEST_P(ASTImporterTestBase, DISABLED_ImportOfEquivalentMethod) {
+TEST_P(ASTImporterTestBase, ImportOfEquivalentMethod) {
   Decl *ToM1;
   {
     Decl *FromTU = getTuDecl(
@@ -3650,7 +3650,7 @@ TEST_P(ASTImporterTestBase, DISABLED_ImportOfEquivalentMethod) {
   EXPECT_EQ(ToM1, ToM2);
 }
 
-TEST_P(ASTImporterTestBase, DISABLED_ImportOfNonEquivalentMethod) {
+TEST_P(ASTImporterTestBase, ImportOfNonEquivalentMethod) {
   Decl *ToM1;
   {
     Decl *FromTU = getTuDecl(
@@ -4340,8 +4340,8 @@ INSTANTIATE_TEST_CASE_P(ParameterizedTests, CanonicalRedeclChain,
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportImplicitMethods,
                         DefaultTestValuesForRunOptions, );
 
-//INSTANTIATE_TEST_CASE_P(ParameterizedTests, CheckODRAtImport,
-//                        DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, CheckODRAtImport,
+                        DefaultTestValuesForRunOptions, );
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportVariables,
                         DefaultTestValuesForRunOptions, );

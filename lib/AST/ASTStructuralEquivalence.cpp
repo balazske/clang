@@ -1409,8 +1409,11 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 
   // Determine whether we've already produced a tentative equivalence for D1.
   Decl *&EquivToD1 = Context.TentativeEquivalences[D1->getCanonicalDecl()];
-  if (EquivToD1)
+  if (EquivToD1) {
+    if (EquivToD1 != D2->getCanonicalDecl())
+      ++Context.NumSameCanDecl1ComparedWithDifferentCanDecl2;
     return EquivToD1 == D2->getCanonicalDecl();
+  }
 
   // Produce a tentative equivalence D1 <-> D2, which will be checked later.
   EquivToD1 = D2->getCanonicalDecl();

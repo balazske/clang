@@ -86,6 +86,9 @@ STATISTIC(
 STATISTIC(
     NumPrimaryUnknownErrors,
     "The # of other import errors");
+STATISTIC(
+    NumStructEqFailsWithDiffCanDecl,
+    "The # of StructEqFailsWithDiffCanDecl");
 
 // FIXME: This class is will be removed after the transition to llvm::Error.
 class IndexErrorCategory : public std::error_category {
@@ -363,6 +366,8 @@ CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD) {
 //  Importer.resetImportErrorCount();
   llvm::Expected<Decl *> ToDeclOrErr = Importer.Import(
       const_cast<FunctionDecl *>(FD));
+  NumStructEqFailsWithDiffCanDecl =
+      Importer.getStructEqFailsWithDiffCanDecl();
   if (!ToDeclOrErr) {
     llvm::handleAllErrors(ToDeclOrErr.takeError(), handleImportError);
     // Where to update these (needed once after full analysis)?

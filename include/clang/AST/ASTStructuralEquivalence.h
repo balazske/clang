@@ -69,6 +69,11 @@ struct StructuralEquivalenceContext {
   /// \c true if the last diagnostic came from ToCtx.
   bool LastDiagFromC2;
 
+  /// Count how many times a D1 is non-first time compared with a D2 that has
+  /// different canonical decl than the original D2. (Struct eq check fails in
+  /// this case.)
+  unsigned int NumSameCanDecl1ComparedWithDifferentCanDecl2;
+
   StructuralEquivalenceContext(
       ASTContext &FromCtx, ASTContext &ToCtx,
       llvm::DenseSet<std::pair<Decl *, Decl *>> &NonEquivalentDecls,
@@ -78,7 +83,8 @@ struct StructuralEquivalenceContext {
       : FromCtx(FromCtx), ToCtx(ToCtx), NonEquivalentDecls(NonEquivalentDecls),
         EqKind(EqKind), StrictTypeSpelling(StrictTypeSpelling),
         ErrorOnTagTypeMismatch(ErrorOnTagTypeMismatch), Complain(Complain),
-        LastDiagFromC2(false) {}
+        LastDiagFromC2(false),
+        NumSameCanDecl1ComparedWithDifferentCanDecl2(0) {}
 
   DiagnosticBuilder Diag1(SourceLocation Loc, unsigned DiagID);
   DiagnosticBuilder Diag2(SourceLocation Loc, unsigned DiagID);
@@ -110,7 +116,6 @@ struct StructuralEquivalenceContext {
   /// probably makes more sense in some other common place then here.
   static llvm::Optional<unsigned>
   findUntaggedStructOrUnionIndex(RecordDecl *Anon);
-
 private:
   /// Finish checking all of the structural equivalences.
   ///

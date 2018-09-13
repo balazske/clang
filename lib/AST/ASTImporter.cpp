@@ -1919,10 +1919,7 @@ bool ASTNodeImporter::IsStructuralMatch(Decl *From, Decl *To, bool Complain) {
       Importer.getFromContext(), Importer.getToContext(),
       Importer.getNonEquivalentDecls(), getStructuralEquivalenceKind(Importer),
       false, Complain);
-  bool Result =  Ctx.IsEquivalent(From, To);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(From, To);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(RecordDecl *FromRecord, 
@@ -1941,10 +1938,7 @@ bool ASTNodeImporter::IsStructuralMatch(RecordDecl *FromRecord,
                                    Importer.getNonEquivalentDecls(),
                                    getStructuralEquivalenceKind(Importer),
                                    false, Complain);
-  bool Result =  Ctx.IsEquivalent(FromRecord, ToRecord);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(FromRecord, ToRecord);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(VarDecl *FromVar, VarDecl *ToVar,
@@ -1953,10 +1947,7 @@ bool ASTNodeImporter::IsStructuralMatch(VarDecl *FromVar, VarDecl *ToVar,
       Importer.getFromContext(), Importer.getToContext(),
       Importer.getNonEquivalentDecls(), getStructuralEquivalenceKind(Importer),
       false, Complain);
-  bool Result =  Ctx.IsEquivalent(FromVar, ToVar);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(FromVar, ToVar);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(EnumDecl *FromEnum, EnumDecl *ToEnum,
@@ -1965,10 +1956,7 @@ bool ASTNodeImporter::IsStructuralMatch(EnumDecl *FromEnum, EnumDecl *ToEnum,
       Importer.getFromContext(), Importer.getToContext(),
       Importer.getNonEquivalentDecls(), getStructuralEquivalenceKind(Importer),
       false, Complain);
-  bool Result =  Ctx.IsEquivalent(FromEnum, ToEnum);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(FromEnum, ToEnum);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(FunctionTemplateDecl *From,
@@ -1977,10 +1965,7 @@ bool ASTNodeImporter::IsStructuralMatch(FunctionTemplateDecl *From,
       Importer.getFromContext(), Importer.getToContext(),
       Importer.getNonEquivalentDecls(), getStructuralEquivalenceKind(Importer),
       false, false);
-  bool Result =  Ctx.IsEquivalent(From, To);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(From, To);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(FunctionDecl *From, FunctionDecl *To) {
@@ -1988,10 +1973,7 @@ bool ASTNodeImporter::IsStructuralMatch(FunctionDecl *From, FunctionDecl *To) {
       Importer.getFromContext(), Importer.getToContext(),
       Importer.getNonEquivalentDecls(), getStructuralEquivalenceKind(Importer),
       false, false);
-  bool Result =  Ctx.IsEquivalent(From, To);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(From, To);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(EnumConstantDecl *FromEC,
@@ -2016,10 +1998,7 @@ bool ASTNodeImporter::IsStructuralMatch(ClassTemplateDecl *From,
                                    Importer.getToContext(),
                                    Importer.getNonEquivalentDecls(),
                                    getStructuralEquivalenceKind(Importer));
-  bool Result =  Ctx.IsEquivalent(From, To);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(From, To);
 }
 
 bool ASTNodeImporter::IsStructuralMatch(VarTemplateDecl *From,
@@ -2028,10 +2007,7 @@ bool ASTNodeImporter::IsStructuralMatch(VarTemplateDecl *From,
                                    Importer.getToContext(),
                                    Importer.getNonEquivalentDecls(),
                                    getStructuralEquivalenceKind(Importer));
-  bool Result =  Ctx.IsEquivalent(From, To);
-  Importer.addStructEqFailsWithDiffCanDecl(
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2);
-  return Result;
+  return Ctx.IsEquivalent(From, To);
 }
 
 ExpectedDecl ASTNodeImporter::VisitDecl(Decl *D) {
@@ -8569,10 +8545,7 @@ bool ASTImporter::IsStructurallyEquivalent(QualType From, QualType To,
   StructuralEquivalenceContext Ctx(FromContext, ToContext, NonEquivalentDecls,
                                    getStructuralEquivalenceKind(*this), false,
                                    Complain);
-  bool Result =  Ctx.IsEquivalent(From, To);
-  StructEqFailsWithDiffCanDecl +=
-      Ctx.NumSameCanDecl1ComparedWithDifferentCanDecl2;
-  return Result;
+  return Ctx.IsEquivalent(From, To);
 }
 
 llvm::Optional<ImportError> ASTImporter::getImportDeclErrorIfAny(

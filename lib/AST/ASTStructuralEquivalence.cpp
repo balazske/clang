@@ -75,10 +75,67 @@
 #include "clang/AST/StmtVisitor.h"
 #include "clang/AST/TypeVisitor.h"
 #include "clang/Basic/SourceManager.h"
+#include "llvm/ADT/Statistic.h"
+
+namespace {
+#define DEBUG_TYPE "CrossTranslationUnit"
+STATISTIC(
+    NumStructEqRecordBeingDefined,
+    "The # of struct eq CXXRecordDecl isBeingDefined case");
+STATISTIC(
+    NumStructEqExprOmitted,
+    "The # of struct eq omitted expression checks");
+STATISTIC(
+    NumStructEqNameDiff,
+    "The # of struct eq fails with name differences");
+STATISTIC(
+    NumStructEqFailedQualType,
+    "The # of failed struct eq QualType checks");
+STATISTIC(
+    NumStructEqFailedFieldDecl,
+    "The # of failed struct eq FieldDecl checks");
+STATISTIC(
+    NumStructEqFailedCXXMethodDecl,
+    "The # of failed struct eq CXXMethodDecl checks");
+STATISTIC(
+    NumStructEqFailedRecordDecl,
+    "The # of failed struct eq RecordDecl checks");
+STATISTIC(
+    NumStructEqFailedDeclCached,
+    "The # of failed struct eq Decl because cached entry");
+STATISTIC(
+    NumStructEqFailedDeclCanDecl,
+    "The # of failed struct eq Decl because different existing canonical decl");
+STATISTIC(
+    NumStructEqFailedOther,
+    "The # of failed struct eq with other reason");
+}
 
 namespace {
 
 using namespace clang;
+
+struct FailureReasonSetter {
+  StructuralEquivalenceContext &Context;
+  StructuralEquivalenceContext::FailureKind FailureKind;
+  FailureReasonSetter(
+      StructuralEquivalenceContext &Context,
+      StructuralEquivalenceContext::FailureKind FK)
+  :
+      Context(Context), FailureKind(FK) { }
+  ~FailureReasonSetter() {
+    if (FailureKind != StructuralEquivalenceContext::FailedOther)
+      Context.setFailureReason(FailureKind);
+  }
+  void release() {
+    FailureKind = StructuralEquivalenceContext::FailedOther;
+  }
+  bool result(bool Result) {
+    if (Result)
+      release();
+    return Result;
+  }
+};
 
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      QualType T1, QualType T2);
@@ -97,6 +154,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     return E1 == E2;
 
   // FIXME: Actually perform a structural comparison!
+  ++NumStructEqExprOmitted;
   return true;
 }
 
@@ -106,7 +164,11 @@ static bool IsStructurallyEquivalent(const IdentifierInfo *Name1,
   if (!Name1 || !Name2)
     return Name1 == Name2;
 
-  return Name1->getName() == Name2->getName();
+  bool Result = (Name1->getName() == Name2->getName());
+  if (!Result)
+    ++NumStructEqNameDiff;
+
+  return Result;
 }
 
 /// Determine whether two nested-name-specifiers are equivalent.
@@ -287,8 +349,11 @@ static bool IsArrayStructurallyEquivalent(StructuralEquivalenceContext &Context,
 /// Determine structural equivalence of two types.
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      QualType T1, QualType T2) {
+  FailureReasonSetter FRS(
+      Context, StructuralEquivalenceContext::FailedQualType);
+
   if (T1.isNull() || T2.isNull())
-    return T1.isNull() && T2.isNull();
+    return FRS.result(T1.isNull() && T2.isNull());
 
   QualType OrigT1 = T1;
   QualType OrigT2 = T2;
@@ -804,12 +869,16 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 
   } // end switch
 
+  FRS.release();
   return true;
 }
 
 /// Determine structural equivalence of two fields.
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      FieldDecl *Field1, FieldDecl *Field2) {
+  FailureReasonSetter FRS(
+      Context, StructuralEquivalenceContext::FailedFieldDecl);
+
   RecordDecl *Owner2 = cast<RecordDecl>(Field2->getDeclContext());
 
   // For anonymous structs/unions, match up the anonymous struct/union type
@@ -819,7 +888,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
       Field2->isAnonymousStructOrUnion()) {
     RecordDecl *D1 = Field1->getType()->castAs<RecordType>()->getDecl();
     RecordDecl *D2 = Field2->getType()->castAs<RecordType>()->getDecl();
-    return IsStructurallyEquivalent(Context, D1, D2);
+    return FRS.result(IsStructurallyEquivalent(Context, D1, D2));
   }
 
   // Check for equivalent field names.
@@ -901,6 +970,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     }
   }
 
+  FRS.release();
   return true;
 }
 
@@ -908,6 +978,9 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      CXXMethodDecl *Method1,
                                      CXXMethodDecl *Method2) {
+  FailureReasonSetter FRS(
+      Context, StructuralEquivalenceContext::FailedCXXMethodDecl);
+
   bool PropertiesEqual =
       Method1->getDeclKind() == Method2->getDeclKind() &&
       Method1->getRefQualifier() == Method2->getRefQualifier() &&
@@ -951,12 +1024,16 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                   Method1->getType(), Method2->getType()))
     return false;
 
+  FRS.release();
   return true;
 }
 
 /// Determine structural equivalence of two records.
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      RecordDecl *D1, RecordDecl *D2) {
+  FailureReasonSetter FRS(
+      Context, StructuralEquivalenceContext::FailedRecordDecl);
+
   if (D1->isUnion() != D2->isUnion()) {
     if (Context.Complain) {
       Context.Diag2(D2->getLocation(),
@@ -1015,7 +1092,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   D1 = D1->getDefinition();
   D2 = D2->getDefinition();
   if (!D1 || !D2)
-    return true;
+    return FRS.result(true);
 
   // If any of the records has external storage and we do a minimal check (or
   // AST import) we assmue they are equivalent. (If we didn't have this
@@ -1024,12 +1101,14 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   // check again and finally we'd have an improper result.)
   if (Context.EqKind == StructuralEquivalenceKind::Minimal)
     if (D1->hasExternalLexicalStorage() || D2->hasExternalLexicalStorage())
-      return true;
+      return FRS.result(true);
 
   // TODO: avoid this case to happen. For now, if the definition is not
   // done yet, we will not compare for equality and assume that they are equal.
-  if (D1->isBeingDefined() || D2->isBeingDefined())
-    return true;
+  if (D1->isBeingDefined() || D2->isBeingDefined()) {
+    ++NumStructEqRecordBeingDefined;
+    return FRS.result(true);
+  }
 
   if (CXXRecordDecl *D1CXX = dyn_cast<CXXRecordDecl>(D1)) {
     if (CXXRecordDecl *D2CXX = dyn_cast<CXXRecordDecl>(D2)) {
@@ -1165,6 +1244,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     return false;
   }
 
+  FRS.release();
   return true;
 }
 
@@ -1404,14 +1484,16 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   // Check whether we already know that these two declarations are not
   // structurally equivalent.
   if (Context.NonEquivalentDecls.count(
-          std::make_pair(D1->getCanonicalDecl(), D2->getCanonicalDecl())))
+          std::make_pair(D1->getCanonicalDecl(), D2->getCanonicalDecl()))) {
+    Context.setFailureReason(StructuralEquivalenceContext::FailedDeclCached);
     return false;
+  }
 
   // Determine whether we've already produced a tentative equivalence for D1.
   Decl *&EquivToD1 = Context.TentativeEquivalences[D1->getCanonicalDecl()];
   if (EquivToD1) {
     if (EquivToD1 != D2->getCanonicalDecl())
-      ++Context.NumSameCanDecl1ComparedWithDifferentCanDecl2;
+      Context.setFailureReason(StructuralEquivalenceContext::FailedDeclCanDecl);
     return EquivToD1 == D2->getCanonicalDecl();
   }
 
@@ -1485,6 +1567,34 @@ StructuralEquivalenceContext::findUntaggedStructOrUnionIndex(RecordDecl *Anon) {
   return Index;
 }
 
+void updateFailedStatistics(StructuralEquivalenceContext &Context) {
+  switch (Context.getFailureReason()) {
+  case StructuralEquivalenceContext::FailedQualType:
+    ++NumStructEqFailedQualType;
+    break;
+  case StructuralEquivalenceContext::FailedFieldDecl:
+    ++NumStructEqFailedFieldDecl;
+    break;
+  case StructuralEquivalenceContext::FailedCXXMethodDecl:
+    ++NumStructEqFailedCXXMethodDecl;
+    break;
+  case StructuralEquivalenceContext::FailedRecordDecl:
+    ++NumStructEqFailedRecordDecl;
+    break;
+  case StructuralEquivalenceContext::FailedDeclCached:
+    ++NumStructEqFailedDeclCached;
+    break;
+  case StructuralEquivalenceContext::FailedDeclCanDecl:
+    ++NumStructEqFailedDeclCanDecl;
+    break;
+  case StructuralEquivalenceContext::FailedOther:
+    ++NumStructEqFailedOther;
+    break;
+  default:
+    llvm_unreachable("Wrong failure kind.");
+  }
+}
+
 bool StructuralEquivalenceContext::IsEquivalent(Decl *D1, Decl *D2) {
 
   // Ensure that the implementation functions (all static functions in this TU)
@@ -1496,19 +1606,38 @@ bool StructuralEquivalenceContext::IsEquivalent(Decl *D1, Decl *D2) {
   assert(DeclsToCheck.empty());
   assert(TentativeEquivalences.empty());
 
-  if (!::IsStructurallyEquivalent(*this, D1, D2))
-    return false;
+  FailureReason.reset();
 
-  return !Finish();
+  if (!::IsStructurallyEquivalent(*this, D1, D2)) {
+    updateFailedStatistics(*this);
+    return false;
+  }
+
+  if (Finish()) {
+    updateFailedStatistics(*this);
+    return false;
+  }
+
+  return true;
 }
 
 bool StructuralEquivalenceContext::IsEquivalent(QualType T1, QualType T2) {
   assert(DeclsToCheck.empty());
   assert(TentativeEquivalences.empty());
-  if (!::IsStructurallyEquivalent(*this, T1, T2))
-    return false;
 
-  return !Finish();
+  FailureReason.reset();
+
+  if (!::IsStructurallyEquivalent(*this, T1, T2)) {
+    updateFailedStatistics(*this);
+    return false;
+  }
+
+  if (Finish()) {
+    updateFailedStatistics(*this);
+    return false;
+  }
+
+  return true;
 }
 
 static bool IsTemplateDeclStructurallyEquivalent(

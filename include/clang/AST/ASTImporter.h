@@ -134,8 +134,6 @@ namespace clang {
     /// (which we have already complained about).
     NonEquivalentDeclSet NonEquivalentDecls;
 
-    unsigned int StructEqFailsWithDiffCanDecl;
-
   public:
     /// \brief Create a new AST importer.
     ///
@@ -396,14 +394,6 @@ namespace clang {
     /// Reset import error counts.
     void resetImportErrorCount();
 
-    unsigned int getStructEqFailsWithDiffCanDecl() const {
-      return StructEqFailsWithDiffCanDecl;
-    }
-
-    void addStructEqFailsWithDiffCanDecl(unsigned int Cnt) {
-      StructEqFailsWithDiffCanDecl += Cnt;
-    }
-    
     /// Determine the index of a field in its parent record.
     /// F should be a field (or indirect field) declaration.
     /// \returns The index of the field in its parent context (starting from 0).

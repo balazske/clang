@@ -374,6 +374,8 @@ namespace clang {
 
     Error ImportTemplateInformation(FunctionDecl *FromFD, FunctionDecl *ToFD);
 
+    bool hasSameVisibilityContext(FunctionDecl *Found, FunctionDecl *From);
+
     bool IsStructuralMatch(Decl *From, Decl *To, bool Complain);
     bool IsStructuralMatch(RecordDecl *FromRecord, RecordDecl *ToRecord,
                            bool Complain = true);
@@ -2937,6 +2939,20 @@ ASTNodeImporter::FindFunctionTemplateSpecialization(FunctionDecl *FromFD) {
   return FoundSpec;
 }
 
+bool ASTNodeImporter::hasSameVisibilityContext(FunctionDecl *Found,
+                                               FunctionDecl *From) {
+  if (From->hasExternalFormalLinkage())
+    return Found->hasExternalFormalLinkage();
+  else if (Importer.GetFromTU(Found) == From->getTranslationUnitDecl()) {
+    if (From->isInAnonymousNamespace())
+      return Found->isInAnonymousNamespace();
+    else
+      return !Found->isInAnonymousNamespace() &&
+             !Found->hasExternalFormalLinkage();
+  }
+  return false;
+}
+
 ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
 
   SmallVector<Decl*, 2> Redecls = getCanonicalForwardRedeclChain(D);
@@ -3002,21 +3018,7 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
 
       if (FunctionDecl *FoundFunction = dyn_cast<FunctionDecl>(Found)) {
 
-        bool VisibilityMatch = true;
-        if (D->hasExternalFormalLinkage())
-          VisibilityMatch = FoundFunction->hasExternalFormalLinkage();
-        else {
-          if (!D->isInAnonymousNamespace())
-            VisibilityMatch = !FoundFunction->isInAnonymousNamespace() &&
-                              !FoundFunction->hasExternalFormalLinkage() &&
-                              Importer.GetFromTU(FoundFunction) ==
-                                  D->getTranslationUnitDecl();
-          else
-            VisibilityMatch = FoundFunction->isInAnonymousNamespace() &&
-                              Importer.GetFromTU(FoundFunction) ==
-                                  D->getTranslationUnitDecl();
-        }
-        if (!VisibilityMatch)
+        if (!hasSameVisibilityContext(FoundFunction, D))
           continue;
 
         if (IsStructuralMatch(D, FoundFunction)) {

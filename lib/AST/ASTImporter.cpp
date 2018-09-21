@@ -3001,32 +3001,46 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
       }
 
       if (FunctionDecl *FoundFunction = dyn_cast<FunctionDecl>(Found)) {
-        if (FoundFunction->hasExternalFormalLinkage() &&
-            D->hasExternalFormalLinkage()) {
-          if (IsStructuralMatch(D, FoundFunction)) {
-            const FunctionDecl *Definition = nullptr;
-            if (D->doesThisDeclarationHaveABody() &&
-                FoundFunction->hasBody(Definition))
-              return Importer.MapImported(
-                  D, const_cast<FunctionDecl *>(Definition));
-            FoundByLookup = FoundFunction;
-            break;
-          }
 
-          // FIXME: Check for overloading more carefully, e.g., by boosting
-          // Sema::IsOverload out to the AST library.
-
-          // Function overloading is okay in C++.
-          if (Importer.getToContext().getLangOpts().CPlusPlus)
-            continue;
-
-          // Complain about inconsistent function types.
-          Importer.ToDiag(Loc, diag::err_odr_function_type_inconsistent)
-            << Name << D->getType() << FoundFunction->getType();
-          Importer.ToDiag(FoundFunction->getLocation(), 
-                          diag::note_odr_value_here)
-            << FoundFunction->getType();
+        bool VisibilityMatch = true;
+        if (D->hasExternalFormalLinkage())
+          VisibilityMatch = FoundFunction->hasExternalFormalLinkage();
+        else {
+          if (!D->isInAnonymousNamespace())
+            VisibilityMatch = !FoundFunction->isInAnonymousNamespace() &&
+                              !FoundFunction->hasExternalFormalLinkage() &&
+                              Importer.GetFromTU(FoundFunction) ==
+                                  D->getTranslationUnitDecl();
+          else
+            VisibilityMatch = FoundFunction->isInAnonymousNamespace() &&
+                              Importer.GetFromTU(FoundFunction) ==
+                                  D->getTranslationUnitDecl();
         }
+        if (!VisibilityMatch)
+          continue;
+
+        if (IsStructuralMatch(D, FoundFunction)) {
+          const FunctionDecl *Definition = nullptr;
+          if (D->doesThisDeclarationHaveABody() &&
+              FoundFunction->hasBody(Definition))
+            return Importer.MapImported(D,
+                                        const_cast<FunctionDecl *>(Definition));
+          FoundByLookup = FoundFunction;
+          break;
+        }
+
+        // FIXME: Check for overloading more carefully, e.g., by boosting
+        // Sema::IsOverload out to the AST library.
+
+        // Function overloading is okay in C++.
+        if (Importer.getToContext().getLangOpts().CPlusPlus)
+          continue;
+
+        // Complain about inconsistent function types.
+        Importer.ToDiag(Loc, diag::err_odr_function_type_inconsistent)
+            << Name << D->getType() << FoundFunction->getType();
+        Importer.ToDiag(FoundFunction->getLocation(), diag::note_odr_value_here)
+            << FoundFunction->getType();
       }
 
       ConflictingDecls.push_back(Found);
@@ -7733,6 +7747,13 @@ Decl *ASTImporter::GetAlreadyImportedOrNull(Decl *FromD) {
   }
 }
 
+TranslationUnitDecl *ASTImporter::GetFromTU(Decl *ToD) {
+  auto FromDPos = ImportedFromDecls.find(ToD);
+  if (FromDPos == ImportedFromDecls.end())
+    return nullptr;
+  return FromDPos->second->getTranslationUnitDecl();
+}
+
 Decl *ASTImporter::GetVAListTag(Decl *FromD) {
   if (isa<TypedefDecl>(FromD) &&
       ToContext.getTargetInfo().getBuiltinVaListKind() ==
@@ -8495,6 +8516,9 @@ Decl *ASTImporter::MapImported(Decl *From, Decl *To) {
   if (Pos != ImportedDecls.end())
     return Pos->second;
   ImportedDecls[From] = To;
+  // This mapping should be maintained only in this function. Therefore do not
+  // check for additional consistency.
+  ImportedFromDecls[To] = From;
   return To;
 }
 

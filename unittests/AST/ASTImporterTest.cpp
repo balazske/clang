@@ -11,6 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#define GTEST_HAS_COMBINE 1
+
 #include "MatchVerifier.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTImporter.h"
@@ -55,22 +57,31 @@ const StringRef DeclToVerifyID = "declToVerify";
 // Common base for the different families of ASTImporter tests that are
 // parameterized on the compiler options which may result a different AST. E.g.
 // -fms-compatibility or -fdelayed-template-parsing.
-struct ParameterizedTestsFixture : ::testing::TestWithParam<ArgVector> {
+class LanguageSpecificTest : public ::testing::Test {
+protected:
+  // Return the extra arguments appended to runtime options at compilation.
+  virtual ArgVector getExtraArgs() const { return ArgVector(); }
+
   // Returns the argument vector used for a specific language option, this set
   // can be tweaked by the test parameters.
   ArgVector getArgVectorForLanguage(Language Lang) const {
     ArgVector Args = getBasicRunOptionsForLanguage(Lang);
-    ArgVector ExtraArgs = GetParam();
+    ArgVector ExtraArgs = getExtraArgs();
     for (const auto &Arg : ExtraArgs) {
       Args.push_back(Arg);
     }
     return Args;
   }
-
 };
 
+auto DefaultTestValuesForRunOptions = ::testing::Values(
+    ArgVector(), ArgVector{"-fdelayed-template-parsing"},
+    ArgVector{"-fms-compatibility"},
+    ArgVector{"-fdelayed-template-parsing", "-fms-compatibility"});
+
 // Base class for those tests which use the family of `testImport` functions.
-class TestImportBase : public ParameterizedTestsFixture {
+class TestImportBase : public LanguageSpecificTest,
+                       public ::testing::WithParamInterface<ArgVector> {
 
   template <typename NodeType>
   NodeType importNode(ASTUnit *From, ASTUnit *To, ASTImporter &Importer,
@@ -155,6 +166,9 @@ class TestImportBase : public ParameterizedTestsFixture {
             has(namedDecl(hasName(DeclToImportID)).bind(DeclToImportID))),
         VerificationMatcher);
   }
+
+protected:
+  ArgVector getExtraArgs() const override { return GetParam(); }
 
 public:
 
@@ -281,7 +295,7 @@ template <typename T> RecordDecl *getRecordDecl(T *D) {
 // This class provides generic methods to write tests which can check internal
 // attributes of AST nodes like getPreviousDecl(), isVirtual(), etc.  Also,
 // this fixture makes it possible to import from several "From" contexts.
-class ASTImporterTestBase : public ParameterizedTestsFixture {
+class ASTImporterTestBase : public LanguageSpecificTest {
 
   const char *const InputFileName = "input.cc";
   const char *const OutputFileName = "output.cc";
@@ -438,6 +452,10 @@ public:
     return FromTU->import(ToAST.get(), From);
   }
 
+  template <class DeclT> DeclT *Import(DeclT *From, Language Lang) {
+    return cast_or_null<DeclT>(Import(cast<Decl>(From), Lang));
+  }
+
   llvm::Expected<QualType>
   ImportType(QualType FromType, Decl *TUDecl, Language ToLang) {
     lazyInitToAST(ToLang);
@@ -459,6 +477,13 @@ public:
       ToAST->getASTContext().getTranslationUnitDecl()->dump();
     }
   }
+};
+
+class ASTImporterLangParamTestBase
+    : public ASTImporterTestBase,
+      public ::testing::WithParamInterface<ArgVector> {
+protected:
+  ArgVector getExtraArgs() const override { return GetParam(); }
 };
 
 struct ImportExpr : TestImportBase {};
@@ -1003,7 +1028,7 @@ TEST_P(ImportDecl, ImportRecordDeclInFunc) {
                  has(declStmt(hasSingleDecl(varDecl(hasName("d")))))))));
 }
 
-TEST_P(ASTImporterTestBase, ImportRecordTypeInFunc) {
+TEST_P(ASTImporterLangParamTestBase, ImportRecordTypeInFunc) {
   Decl *FromTU = getTuDecl("int declToImport() { "
                            "  struct data_t {int a;int b;};"
                            "  struct data_t d;"
@@ -1019,7 +1044,7 @@ TEST_P(ASTImporterTestBase, ImportRecordTypeInFunc) {
   EXPECT_FALSE(Err);
 }
 
-TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams) {
+TEST_P(ASTImporterLangParamTestBase, ImportRecordDeclInFuncParams) {
   // This construct is not supported by ASTImporter.
   Decl *FromTU = getTuDecl(
       "int declToImport(struct data_t{int a;int b;} d){ return 0; }",
@@ -1032,7 +1057,7 @@ TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams) {
   EXPECT_EQ(To, nullptr);
 }
 
-TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams2) {
+TEST_P(ASTImporterLangParamTestBase, ImportRecordDeclInFuncParams2) {
   // This construct is not supported by ASTImporter.
   Decl *FromTU = getTuDecl(
       "int declToImport(struct data_t{int a;int b;} ***d){ return 0; }",
@@ -1045,7 +1070,7 @@ TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParams2) {
   EXPECT_EQ(To, nullptr);
 }
 
-TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncFromMacro) {
+TEST_P(ASTImporterLangParamTestBase, ImportRecordDeclInFuncFromMacro) {
   Decl *FromTU = getTuDecl(
       "#define NONAME_SIZEOF(type) sizeof(struct{type *dummy;}) \n"
       "int declToImport(){ return NONAME_SIZEOF(int); }",
@@ -1061,7 +1086,7 @@ TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncFromMacro) {
                        hasDescendant(unaryExprOrTypeTraitExpr()))));
 }
 
-TEST_P(ASTImporterTestBase, ImportRecordDeclInFuncParamsFromMacro) {
+TEST_P(ASTImporterLangParamTestBase, ImportRecordDeclInFuncParamsFromMacro) {
   // This construct is not supported by ASTImporter.
   Decl *FromTU = getTuDecl(
       "#define PAIR_STRUCT(type) struct data_t{type a;type b;} \n"
@@ -1105,7 +1130,7 @@ TEST_P(ImportDecl, DISABLED_ImportTemplateDefaultArgument) {
           functionTemplateDecl(has(templateArgument())));
 }
 
-TEST_P(ASTImporterTestBase, ImportOfTemplatedDeclOfClassTemplateDecl) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfTemplatedDeclOfClassTemplateDecl) {
   Decl *FromTU = getTuDecl("template<class X> struct S{};", Lang_CXX);
   auto From =
       FirstDeclMatcher<ClassTemplateDecl>().match(FromTU, classTemplateDecl());
@@ -1118,7 +1143,8 @@ TEST_P(ASTImporterTestBase, ImportOfTemplatedDeclOfClassTemplateDecl) {
   EXPECT_EQ(ToTemplated1, ToTemplated);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfTemplatedDeclOfFunctionTemplateDecl) {
+TEST_P(ASTImporterLangParamTestBase,
+       ImportOfTemplatedDeclOfFunctionTemplateDecl) {
   Decl *FromTU = getTuDecl("template<class X> void f(){}", Lang_CXX);
   auto From = FirstDeclMatcher<FunctionTemplateDecl>().match(
       FromTU, functionTemplateDecl());
@@ -1131,7 +1157,7 @@ TEST_P(ASTImporterTestBase, ImportOfTemplatedDeclOfFunctionTemplateDecl) {
   EXPECT_EQ(ToTemplated1, ToTemplated);
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        ImportOfTemplatedDeclShouldImportTheClassTemplateDecl) {
   Decl *FromTU = getTuDecl("template<class X> struct S{};", Lang_CXX);
   auto FromFT =
@@ -1147,7 +1173,7 @@ TEST_P(ASTImporterTestBase,
   EXPECT_TRUE(ToFT);
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        ImportOfTemplatedDeclShouldImportTheFunctionTemplateDecl) {
   Decl *FromTU = getTuDecl("template<class X> void f(){}", Lang_CXX);
   auto FromFT = FirstDeclMatcher<FunctionTemplateDecl>().match(
@@ -1163,7 +1189,7 @@ TEST_P(ASTImporterTestBase,
   EXPECT_TRUE(ToFT);
 }
 
-TEST_P(ASTImporterTestBase, ImportCorrectTemplatedDecl) {
+TEST_P(ASTImporterLangParamTestBase, ImportCorrectTemplatedDecl) {
   auto Code =
         R"(
         namespace x {
@@ -1263,7 +1289,7 @@ TEST_P(ImportExpr, ImportVarOfUnnamedStruct) {
                          Verifier, varDecl());
 }
 
-TEST_P(ASTImporterTestBase, ImportFunctionWithBackReferringParameter) {
+TEST_P(ASTImporterLangParamTestBase, ImportFunctionWithBackReferringParameter) {
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
     R"(
@@ -1458,7 +1484,7 @@ TEST_P(ImportDecl, ImportTemplatedDeclForTemplate) {
           unless(has(cxxRecordDecl(hasName("declToImport"))))))));
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        TUshouldNotContainTemplatedDeclOfFunctionTemplates) {
 
   Decl *From, *To;
@@ -1486,7 +1512,8 @@ TEST_P(ASTImporterTestBase,
   Check(To);
 }
 
-TEST_P(ASTImporterTestBase, TUshouldNotContainTemplatedDeclOfClassTemplates) {
+TEST_P(ASTImporterLangParamTestBase,
+       TUshouldNotContainTemplatedDeclOfClassTemplates) {
 
   Decl *From, *To;
   std::tie(From, To) =
@@ -1513,7 +1540,8 @@ TEST_P(ASTImporterTestBase, TUshouldNotContainTemplatedDeclOfClassTemplates) {
   Check(To);
 }
 
-TEST_P(ASTImporterTestBase, TUshouldNotContainTemplatedDeclOfTypeAlias) {
+TEST_P(ASTImporterLangParamTestBase,
+       TUshouldNotContainTemplatedDeclOfTypeAlias) {
 
   Decl *From, *To;
   std::tie(From, To) =
@@ -1542,9 +1570,8 @@ TEST_P(ASTImporterTestBase, TUshouldNotContainTemplatedDeclOfTypeAlias) {
   Check(To);
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    TUshouldNotContainClassTemplateSpecializationOfImplicitInstantiation) {
+TEST_P(ASTImporterLangParamTestBase,
+       TUshouldNotContainClassTemplateSpecializationOfImplicitInstantiation) {
 
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
@@ -1573,9 +1600,8 @@ TEST_P(
       MatchVerifier<Decl>{}.match(To->getTranslationUnitDecl(), Pattern));
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    TUshouldContainClassTemplateSpecializationOfExplicitInstantiation) {
+TEST_P(ASTImporterLangParamTestBase,
+       TUshouldContainClassTemplateSpecializationOfExplicitInstantiation) {
 
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
@@ -1602,9 +1628,8 @@ TEST_P(
   EXPECT_TRUE(MatchVerifier<Decl>{}.match(To, Pattern));
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    ImportOfFriendRecordDoesNotMergeDefinition) {
+TEST_P(ASTImporterLangParamTestBase,
+       ImportOfFriendRecordDoesNotMergeDefinition) {
   Decl *FromTU = getTuDecl(
       R"(
       class A {
@@ -1643,9 +1668,7 @@ TEST_P(
       ToClass->getDescribedClassTemplate());
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    ImportOfRecursiveFriendClass) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfRecursiveFriendClass) {
   Decl *FromTu = getTuDecl(
       R"(
       class declToImport {
@@ -1662,9 +1685,7 @@ TEST_P(
   EXPECT_TRUE(MatchVerifier<Decl>{}.match(ToD, Pattern));
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    ImportOfRecursiveFriendClassTemplate) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfRecursiveFriendClassTemplate) {
   Decl *FromTu = getTuDecl(
       R"(
       template<class A> class declToImport {
@@ -1687,7 +1708,7 @@ TEST_P(
   EXPECT_EQ(Friend->getFriendDecl()->getPreviousDecl(), Class);
 }
 
-struct ImportFunctionTemplateSpecializations : ASTImporterTestBase {};
+struct ImportFunctionTemplateSpecializations : ASTImporterLangParamTestBase {};
 
 TEST_P(ImportFunctionTemplateSpecializations,
        TUshouldNotContainFunctionTemplateImplicitInstantiation) {
@@ -2002,8 +2023,8 @@ TEST_P(ImportFunctionTemplateSpecializations, DefinitionThenPrototype) {
   EXPECT_EQ(To1->getPreviousDecl(), To0);
 }
 
-TEST_P(ASTImporterTestBase, CXXRecordDeclFieldsShouldBeInCorrectOrder) {
-
+TEST_P(ASTImporterLangParamTestBase,
+       CXXRecordDeclFieldsShouldBeInCorrectOrder) {
 
   Decl *From, *To;
   std::tie(From, To) =
@@ -2036,7 +2057,8 @@ TEST_P(ASTImporterTestBase, CXXRecordDeclFieldsShouldBeInCorrectOrder) {
   Check(To);
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(
+    ASTImporterLangParamTestBase,
     CXXRecordDeclFieldsShouldBeInCorrectOrderEvenWhenWeImportFirstTheLastDecl) {
 
   Decl *From, *To;
@@ -2077,7 +2099,7 @@ TEST_P(ASTImporterTestBase,
   Check(To);
 }
 
-TEST_P(ASTImporterTestBase, ShouldImportImplicitCXXRecordDecl) {
+TEST_P(ASTImporterLangParamTestBase, ShouldImportImplicitCXXRecordDecl) {
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
       R"(
@@ -2093,7 +2115,8 @@ TEST_P(ASTImporterTestBase, ShouldImportImplicitCXXRecordDecl) {
   EXPECT_TRUE(Verifier.match(To, Matcher));
 }
 
-TEST_P(ASTImporterTestBase, ShouldImportImplicitCXXRecordDeclOfClassTemplate) {
+TEST_P(ASTImporterLangParamTestBase,
+       ShouldImportImplicitCXXRecordDeclOfClassTemplate) {
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
       R"(
@@ -2110,9 +2133,8 @@ TEST_P(ASTImporterTestBase, ShouldImportImplicitCXXRecordDeclOfClassTemplate) {
   EXPECT_TRUE(Verifier.match(To, Matcher));
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    ShouldImportImplicitCXXRecordDeclOfClassTemplateSpecializationDecl) {
+TEST_P(ASTImporterLangParamTestBase,
+       ShouldImportImplicitCXXRecordDeclOfClassTemplateSpecializationDecl) {
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
       R"(
@@ -2131,7 +2153,7 @@ TEST_P(
       MatchVerifier<Decl>{}.match(To->getTranslationUnitDecl(), Pattern));
 }
 
-TEST_P(ASTImporterTestBase, IDNSOrdinary) {
+TEST_P(ASTImporterLangParamTestBase, IDNSOrdinary) {
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
     R"(
@@ -2145,7 +2167,7 @@ TEST_P(ASTImporterTestBase, IDNSOrdinary) {
   EXPECT_EQ(From->getIdentifierNamespace(), To->getIdentifierNamespace());
 }
 
-TEST_P(ASTImporterTestBase, IDNSOfNonmemberOperator) {
+TEST_P(ASTImporterLangParamTestBase, IDNSOfNonmemberOperator) {
   Decl *FromTU = getTuDecl(
     R"(
     struct X {};
@@ -2156,9 +2178,8 @@ TEST_P(ASTImporterTestBase, IDNSOfNonmemberOperator) {
   EXPECT_EQ(From->getIdentifierNamespace(), To->getIdentifierNamespace());
 }
 
-TEST_P(
-    ASTImporterTestBase,
-    ShouldImportMembersOfClassTemplateSpecializationDecl) {
+TEST_P(ASTImporterLangParamTestBase,
+       ShouldImportMembersOfClassTemplateSpecializationDecl) {
   Decl *From, *To;
   std::tie(From, To) = getImportedDecl(
       R"(
@@ -2177,7 +2198,7 @@ TEST_P(
       MatchVerifier<Decl>{}.match(To->getTranslationUnitDecl(), Pattern));
 }
 
-struct ImportFunctions : ASTImporterTestBase {};
+struct ImportFunctions : ASTImporterLangParamTestBase {};
 
 TEST_P(ImportFunctions,
        PrototypeShouldBeImportedAsAPrototypeWhenThereIsNoDefinition) {
@@ -2605,6 +2626,112 @@ TEST_P(ImportFunctions,
   EXPECT_EQ(ToM1, ToM2);
 }
 
+class ImportFunctionsVisibilityChain
+    : public ASTImporterTestBase,
+      public ::testing::WithParamInterface<
+          std::tuple<ArgVector, const char *>> {
+protected:
+  ArgVector getExtraArgs() const override { return std::get<0>(GetParam()); }
+  std::string getCode() const { return std::get<1>(GetParam()); }
+};
+
+class ImportFunctionsVisibility
+    : public ASTImporterTestBase,
+      public ::testing::WithParamInterface<
+          std::tuple<ArgVector, std::tuple<const char *, const char *, bool>>> {
+protected:
+  ArgVector getExtraArgs() const override { return std::get<0>(GetParam()); }
+  std::string getCode0() const { return std::get<0>(std::get<1>(GetParam())); }
+  std::string getCode1() const { return std::get<1>(std::get<1>(GetParam())); }
+  bool shouldBeLinked() const { return std::get<2>(std::get<1>(GetParam())); }
+};
+
+const char *ExternF = "void f();";
+const char *StaticF = "static void f();";
+const char *AnonF = "namespace { void f(); }";
+
+TEST_P(ImportFunctionsVisibilityChain, ImportChain) {
+  std::string Code = getCode() + getCode();
+  TranslationUnitDecl *FromTu = getTuDecl(Code, Lang_CXX, "input0.c");
+
+  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(
+      FromTu, functionDecl(hasName("f")));
+  auto *FromF1 =
+      LastDeclMatcher<FunctionDecl>().match(FromTu, functionDecl(hasName("f")));
+
+  auto *ToF0 = Import(FromF0, Lang_CXX);
+  auto *ToF1 = Import(FromF1, Lang_CXX);
+
+  EXPECT_TRUE(ToF0);
+  ASSERT_TRUE(ToF1);
+  EXPECT_NE(ToF0, ToF1);
+  EXPECT_EQ(ToF1->getPreviousDecl(), ToF0);
+}
+
+auto ImportChainParams = ::testing::Values(ExternF, StaticF, AnonF);
+
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportFunctionsVisibilityChain,
+                        ::testing::Combine(DefaultTestValuesForRunOptions,
+                                           ImportChainParams), );
+
+TEST_P(ImportFunctionsVisibility, ImportAfter) {
+  TranslationUnitDecl *ToTu = getToTuDecl(getCode0(), Lang_CXX);
+  TranslationUnitDecl *FromTu = getTuDecl(getCode1(), Lang_CXX, "input1.cc");
+
+  auto *ToF0 =
+      FirstDeclMatcher<FunctionDecl>().match(ToTu, functionDecl(hasName("f")));
+  auto *FromF1 = FirstDeclMatcher<FunctionDecl>().match(
+      FromTu, functionDecl(hasName("f")));
+
+  auto *ToF1 = Import(FromF1, Lang_CXX);
+
+  ASSERT_TRUE(ToF0);
+  ASSERT_TRUE(ToF1);
+  EXPECT_NE(ToF0, ToF1);
+
+  if (shouldBeLinked())
+    EXPECT_EQ(ToF1->getPreviousDecl(), ToF0);
+  else
+    EXPECT_FALSE(ToF1->getPreviousDecl());
+}
+
+TEST_P(ImportFunctionsVisibility, ImportAfterImport) {
+  TranslationUnitDecl *FromTu0 = getTuDecl(getCode0(), Lang_CXX, "input0.cc");
+  TranslationUnitDecl *FromTu1 = getTuDecl(getCode1(), Lang_CXX, "input1.cc");
+
+  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(
+      FromTu0, functionDecl(hasName("f")));
+  auto *FromF1 = FirstDeclMatcher<FunctionDecl>().match(
+      FromTu1, functionDecl(hasName("f")));
+
+  auto *ToF0 = Import(FromF0, Lang_CXX);
+  auto *ToF1 = Import(FromF1, Lang_CXX);
+
+  ASSERT_TRUE(ToF0);
+  ASSERT_TRUE(ToF1);
+  EXPECT_NE(ToF0, ToF1);
+
+  if (shouldBeLinked())
+    EXPECT_EQ(ToF1->getPreviousDecl(), ToF0);
+  else
+    EXPECT_FALSE(ToF1->getPreviousDecl());
+}
+
+auto ImportAfterParams =
+    ::testing::Values(std::make_tuple(ExternF, ExternF, true),
+                      std::make_tuple(ExternF, StaticF, false),
+                      std::make_tuple(ExternF, AnonF, false),
+                      std::make_tuple(StaticF, ExternF, false),
+                      std::make_tuple(StaticF, StaticF, false),
+                      std::make_tuple(StaticF, AnonF, false),
+                      std::make_tuple(AnonF, ExternF, false),
+                      std::make_tuple(AnonF, StaticF, false),
+                      std::make_tuple(AnonF, AnonF, false));
+
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportFunctionsVisibility,
+                        ::testing::Combine(DefaultTestValuesForRunOptions,
+                                           ImportAfterParams), );
+
 struct ImportFriendFunctions : ImportFunctions {};
 
 TEST_P(ImportFriendFunctions, ImportFriendList) {
@@ -2965,7 +3092,7 @@ TEST_P(ImportFriendFunctions, ImportFriendChangesLookup) {
   EXPECT_TRUE(ToFriendF->isInIdentifierNamespace(Decl::IDNS_OrdinaryFriend));
 }
 
-TEST_P(ASTImporterTestBase, OmitVAListTag) {
+TEST_P(ASTImporterLangParamTestBase, OmitVAListTag) {
   Decl *From, *To;
   std::tie(From, To) =
       getImportedDecl("void declToImport(int n, ...) {"
@@ -2978,7 +3105,7 @@ TEST_P(ASTImporterTestBase, OmitVAListTag) {
       MatchVerifier<Decl>{}.match(To->getTranslationUnitDecl(), Pattern));
 }
 
-TEST_P(ASTImporterTestBase, ProperPrevDeclForClassTemplateDecls) {
+TEST_P(ASTImporterLangParamTestBase, ProperPrevDeclForClassTemplateDecls) {
   auto Pattern = classTemplateSpecializationDecl(hasName("X"));
 
   ClassTemplateSpecializationDecl *Imported1;
@@ -3010,7 +3137,7 @@ TEST_P(ASTImporterTestBase, ProperPrevDeclForClassTemplateDecls) {
   EXPECT_EQ(Imported2->getPreviousDecl(), Imported1);
 }
 
-TEST_P(ASTImporterTestBase, TypeForDeclShouldBeSet) {
+TEST_P(ASTImporterLangParamTestBase, TypeForDeclShouldBeSet) {
   auto Pattern = cxxRecordDecl(hasName("X"));
 
   CXXRecordDecl *Imported1;
@@ -3032,7 +3159,7 @@ TEST_P(ASTImporterTestBase, TypeForDeclShouldBeSet) {
   EXPECT_EQ(Imported1->getTypeForDecl(), Imported2->getTypeForDecl());
 }
 
-TEST_P(ASTImporterTestBase, DeclsFromFriendsShouldBeInRedeclChains2) {
+TEST_P(ASTImporterLangParamTestBase, DeclsFromFriendsShouldBeInRedeclChains2) {
   Decl *From, *To;
   std::tie(From, To) =
       getImportedDecl("class declToImport {};", Lang_CXX,
@@ -3042,7 +3169,7 @@ TEST_P(ASTImporterTestBase, DeclsFromFriendsShouldBeInRedeclChains2) {
   EXPECT_TRUE(Imported->getPreviousDecl());
 }
 
-struct CanonicalRedeclChain : ASTImporterTestBase {};
+struct CanonicalRedeclChain : ASTImporterLangParamTestBase {};
 
 TEST_P(CanonicalRedeclChain, ShouldBeConsequentWithMatchers) {
   Decl *FromTU = getTuDecl("void f();", Lang_CXX);
@@ -3083,7 +3210,7 @@ TEST_P(CanonicalRedeclChain, ShouldBeSameForAllDeclInTheChain) {
   EXPECT_THAT(RedeclsD1, ::testing::ContainerEq(RedeclsD2));
 }
 
-TEST_P(ASTImporterTestBase, ImportDoesUpdateUsedFlag) {
+TEST_P(ASTImporterLangParamTestBase, ImportDoesUpdateUsedFlag) {
   auto Pattern = varDecl(hasName("x"));
   VarDecl *Imported1;
   {
@@ -3109,7 +3236,7 @@ TEST_P(ASTImporterTestBase, ImportDoesUpdateUsedFlag) {
   EXPECT_TRUE(Imported2->isUsed(false));
 }
 
-TEST_P(ASTImporterTestBase, ImportDoesUpdateUsedFlag2) {
+TEST_P(ASTImporterLangParamTestBase, ImportDoesUpdateUsedFlag2) {
   auto Pattern = varDecl(hasName("x"));
   VarDecl *ExistingD;
   {
@@ -3127,7 +3254,7 @@ TEST_P(ASTImporterTestBase, ImportDoesUpdateUsedFlag2) {
   EXPECT_TRUE(ExistingD->isUsed(false));
 }
 
-TEST_P(ASTImporterTestBase, ImportDoesUpdateUsedFlag3) {
+TEST_P(ASTImporterLangParamTestBase, ImportDoesUpdateUsedFlag3) {
   auto Pattern = varDecl(hasName("a"));
   VarDecl *ExistingD;
   {
@@ -3158,7 +3285,7 @@ TEST_P(ASTImporterTestBase, ImportDoesUpdateUsedFlag3) {
   EXPECT_TRUE(ExistingD->isUsed(false));
 }
 
-TEST_P(ASTImporterTestBase, ReimportWithUsedFlag) {
+TEST_P(ASTImporterLangParamTestBase, ReimportWithUsedFlag) {
   auto Pattern = varDecl(hasName("x"));
   
   Decl *FromTU = getTuDecl("int x;", Lang_CXX, "input0.cc");
@@ -3176,7 +3303,8 @@ TEST_P(ASTImporterTestBase, ReimportWithUsedFlag) {
 }
 
 // Note, this test case is automatically reduced from Xerces code.
-TEST_P(ASTImporterTestBase, UsingShadowDeclShouldImportTheDeclOnlyOnce) {
+TEST_P(ASTImporterLangParamTestBase,
+       UsingShadowDeclShouldImportTheDeclOnlyOnce) {
   auto Pattern = cxxRecordDecl(hasName("B"));
 
   {
@@ -3231,7 +3359,8 @@ long b = strtol(&a);
   EXPECT_EQ(DeclCounter<UsingShadowDecl>().match(ToTU, usingShadowDecl()), 1u);
 }
 
-TEST_P(ASTImporterTestBase, ImportDefinitionOfClassTemplateAfterFwdDecl) {
+TEST_P(ASTImporterLangParamTestBase,
+       ImportDefinitionOfClassTemplateAfterFwdDecl) {
   {
     Decl *FromTU = getTuDecl(
         R"(
@@ -3264,7 +3393,7 @@ TEST_P(ASTImporterTestBase, ImportDefinitionOfClassTemplateAfterFwdDecl) {
   }
 }
 
-TEST_P(ASTImporterTestBase, ImportOfDeclAfterFwdDecl) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfDeclAfterFwdDecl) {
   Decl *ToD1;
   {
     Decl *FromTU = getTuDecl(
@@ -3295,7 +3424,7 @@ TEST_P(ASTImporterTestBase, ImportOfDeclAfterFwdDecl) {
   EXPECT_EQ(ToD1, ToD2->getPreviousDecl());
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        ImportDefinitionOfClassTemplateIfThereIsAnExistingFwdDeclAndDefinition) {
   Decl *ToTU = getToTuDecl(
       R"(
@@ -3335,7 +3464,7 @@ TEST_P(ASTImporterTestBase,
                     .match(ToTU, classTemplateDecl()));
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        ImportDefinitionOfClassIfThereIsAnExistingFwdDeclAndDefinition) {
   auto Pattern = cxxRecordDecl(hasName("B"), hasParent(translationUnitDecl()));
   Decl *ToTU = getToTuDecl(
@@ -3365,9 +3494,8 @@ TEST_P(ASTImporterTestBase,
 }
 
 TEST_P(
-    ASTImporterTestBase,
-    ImportDefinitionOfClassTemplateSpecIfThereIsAnExistingFwdDeclAndDefinition)
-{
+    ASTImporterLangParamTestBase,
+    ImportDefinitionOfClassTemplateSpecIfThereIsAnExistingFwdDeclAndDefinition) {
   Decl *ToTU = getToTuDecl(
       R"(
       template <typename T>
@@ -3409,7 +3537,7 @@ TEST_P(
                     .match(ToTU, classTemplateSpecializationDecl()));
 }
 
-TEST_P(ASTImporterTestBase, ObjectsWithUnnamedStructType) {
+TEST_P(ASTImporterLangParamTestBase, ObjectsWithUnnamedStructType) {
   Decl *FromTU = getTuDecl(
       R"(
       struct { int a; int b; } object0 = { 2, 3 };
@@ -3433,7 +3561,7 @@ TEST_P(ASTImporterTestBase, ObjectsWithUnnamedStructType) {
   EXPECT_NE(To0->getCanonicalDecl(), To1->getCanonicalDecl());
 }
 
-class ImportImplicitMethods : public ASTImporterTestBase {
+class ImportImplicitMethods : public ASTImporterLangParamTestBase {
 public:
   static constexpr auto DefaultCode = R"(
       struct A { int x; };
@@ -3544,7 +3672,7 @@ TEST_P(ImportImplicitMethods, DoNotImportOtherMethod) {
   testNoImportOf(cxxMethodDecl(hasName("f")), Code);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfEquivalentRecord) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfEquivalentRecord) {
   Decl *ToR1;
   {
     Decl *FromTU = getTuDecl(
@@ -3568,7 +3696,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentRecord) {
   EXPECT_EQ(ToR1, ToR2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfNonEquivalentRecord) {
   Decl *ToR1;
   {
     Decl *FromTU = getTuDecl(
@@ -3589,7 +3717,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentRecord) {
   EXPECT_FALSE(ToR2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfEquivalentField) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfEquivalentField) {
   Decl *ToF1;
   {
     Decl *FromTU = getTuDecl(
@@ -3609,7 +3737,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentField) {
   EXPECT_EQ(ToF1, ToF2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfNonEquivalentField) {
   Decl *ToF1;
   {
     Decl *FromTU = getTuDecl(
@@ -3630,7 +3758,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentField) {
   EXPECT_FALSE(ToF2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfEquivalentMethod) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfEquivalentMethod) {
   Decl *ToM1;
   {
     Decl *FromTU = getTuDecl(
@@ -3650,7 +3778,7 @@ TEST_P(ASTImporterTestBase, ImportOfEquivalentMethod) {
   EXPECT_EQ(ToM1, ToM2);
 }
 
-TEST_P(ASTImporterTestBase, ImportOfNonEquivalentMethod) {
+TEST_P(ASTImporterLangParamTestBase, ImportOfNonEquivalentMethod) {
   Decl *ToM1;
   {
     Decl *FromTU = getTuDecl(
@@ -3673,7 +3801,7 @@ TEST_P(ASTImporterTestBase, ImportOfNonEquivalentMethod) {
   EXPECT_NE(ToM1, ToM2);
 }
 
-TEST_P(ASTImporterTestBase, ImportUnnamedStructsWithRecursingField) {
+TEST_P(ASTImporterLangParamTestBase, ImportUnnamedStructsWithRecursingField) {
   Decl *FromTU = getTuDecl(
       R"(
       struct A {
@@ -3705,7 +3833,7 @@ TEST_P(ASTImporterTestBase, ImportUnnamedStructsWithRecursingField) {
       R1, recordDecl(has(fieldDecl(hasName("next"))))));
 }
 
-TEST_P(ASTImporterTestBase, ImportUnnamedFieldsInCorrectOrder) {
+TEST_P(ASTImporterLangParamTestBase, ImportUnnamedFieldsInCorrectOrder) {
   Decl *FromTU = getTuDecl(
       R"(
       void f(int X, int Y, bool Z) {
@@ -3740,7 +3868,8 @@ TEST_P(ASTImporterTestBase, ImportUnnamedFieldsInCorrectOrder) {
   EXPECT_EQ(FromIndex, 3u);
 }
 
-TEST_P(ASTImporterTestBase, MergeFieldDeclsOfClassTemplateSpecialization) {
+TEST_P(ASTImporterLangParamTestBase,
+       MergeFieldDeclsOfClassTemplateSpecialization) {
   std::string ClassTemplate =
       R"(
       template <typename T>
@@ -3785,7 +3914,8 @@ TEST_P(ASTImporterTestBase, MergeFieldDeclsOfClassTemplateSpecialization) {
   EXPECT_TRUE(ToField->getInClassInitializer());
 }
 
-TEST_P(ASTImporterTestBase, MergeFunctionOfClassTemplateSpecialization) {
+TEST_P(ASTImporterLangParamTestBase,
+       MergeFunctionOfClassTemplateSpecialization) {
   std::string ClassTemplate =
       R"(
       template <typename T>
@@ -3826,7 +3956,7 @@ TEST_P(ASTImporterTestBase, MergeFunctionOfClassTemplateSpecialization) {
   EXPECT_TRUE(ToFun->hasBody());
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        ODRViolationOfClassTemplateSpecializationsShouldBeReported) {
   std::string ClassTemplate =
       R"(
@@ -3873,7 +4003,7 @@ TEST_P(ASTImporterTestBase,
                     ToTU, classTemplateSpecializationDecl()));
 }
 
-TEST_P(ASTImporterTestBase, MergeCtorOfClassTemplateSpecialization) {
+TEST_P(ASTImporterLangParamTestBase, MergeCtorOfClassTemplateSpecialization) {
   std::string ClassTemplate =
       R"(
       template <typename T>
@@ -3914,7 +4044,7 @@ TEST_P(ASTImporterTestBase, MergeCtorOfClassTemplateSpecialization) {
   EXPECT_TRUE(ToCtor->hasBody());
 }
 
-TEST_P(ASTImporterTestBase,
+TEST_P(ASTImporterLangParamTestBase,
        ClassTemplatePartialSpecializationsShouldNotBeDuplicated) {
   auto Code =
       R"(
@@ -3941,7 +4071,8 @@ TEST_P(ASTImporterTestBase,
                     ToTU, classTemplatePartialSpecializationDecl()));
 }
 
-TEST_P(ASTImporterTestBase, ClassTemplateSpecializationsShouldNotBeDuplicated) {
+TEST_P(ASTImporterLangParamTestBase,
+       ClassTemplateSpecializationsShouldNotBeDuplicated) {
   auto Code =
       R"(
     // primary template
@@ -3965,7 +4096,8 @@ TEST_P(ASTImporterTestBase, ClassTemplateSpecializationsShouldNotBeDuplicated) {
                    ToTU, classTemplateSpecializationDecl()));
 }
 
-TEST_P(ASTImporterTestBase, ClassTemplateFullAndPartialSpecsShouldNotBeMixed) {
+TEST_P(ASTImporterLangParamTestBase,
+       ClassTemplateFullAndPartialSpecsShouldNotBeMixed) {
   std::string PrimaryTemplate =
       R"(
     template<class T1, class T2, int I>
@@ -3997,7 +4129,7 @@ TEST_P(ASTImporterTestBase, ClassTemplateFullAndPartialSpecsShouldNotBeMixed) {
                               unless(classTemplatePartialSpecializationDecl()))));
 }
 
-TEST_P(ASTImporterTestBase, InitListExprValueKindShouldBeImported) {
+TEST_P(ASTImporterLangParamTestBase, InitListExprValueKindShouldBeImported) {
   Decl *TU = getTuDecl(
       R"(
       const int &init();
@@ -4016,7 +4148,7 @@ TEST_P(ASTImporterTestBase, InitListExprValueKindShouldBeImported) {
   EXPECT_TRUE(ToInitExpr->isGLValue());
 }
 
-struct DeclContextTest : ASTImporterTestBase {};
+struct DeclContextTest : ASTImporterLangParamTestBase {};
 
 TEST_P(DeclContextTest, removeDeclOfClassTemplateSpecialization) {
   Decl *TU = getTuDecl(
@@ -4045,7 +4177,7 @@ TEST_P(DeclContextTest, removeDeclOfClassTemplateSpecialization) {
   EXPECT_FALSE(NS->containsDecl(Spec));
 }
 
-class CheckODRAtImport : public ASTImporterTestBase { };
+class CheckODRAtImport : public ASTImporterLangParamTestBase {};
 
 TEST_P(CheckODRAtImport, Class) {
   getToTuDecl(
@@ -4216,7 +4348,7 @@ TEST_P(CheckODRAtImport, VariableAndRecord) {
   EXPECT_TRUE(ImportedRecord);
 }
 
-struct ImportVariables : ASTImporterTestBase {};
+struct ImportVariables : ASTImporterLangParamTestBase {};
 
 TEST_P(ImportVariables, ImportOfOneDeclBringsInTheWholeChain) {
   Decl *FromTU = getTuDecl(
@@ -4307,12 +4439,6 @@ TEST_P(ImportVariables, InitAndDefinitionAreInTheFromContext) {
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, DeclContextTest,
                         ::testing::Values(ArgVector()), );
 
-auto DefaultTestValuesForRunOptions = ::testing::Values(
-    ArgVector(),
-    ArgVector{"-fdelayed-template-parsing"},
-    ArgVector{"-fms-compatibility"},
-    ArgVector{"-fdelayed-template-parsing", "-fms-compatibility"});
-
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportExpr,
                         DefaultTestValuesForRunOptions, );
 
@@ -4322,7 +4448,7 @@ INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportType,
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportDecl,
                         DefaultTestValuesForRunOptions, );
 
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterTestBase,
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterLangParamTestBase,
                         DefaultTestValuesForRunOptions, );
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportFunctions,

@@ -29,6 +29,7 @@ namespace clang {
   class CXXCtorInitializer;
   class CXXBaseSpecifier;
   class Decl;
+  class TranslationUnitDecl;
   class DeclContext;
   class DiagnosticsEngine;
   class Expr;
@@ -102,6 +103,10 @@ namespace clang {
     /// \brief Mapping from the already-imported declarations in the "from"
     /// context to the corresponding declarations in the "to" context.
     llvm::DenseMap<Decl *, Decl *> ImportedDecls;
+
+    /// \brief Mapping from the already-imported declarations in the "to"
+    /// context to the corresponding declarations in the "from" context.
+    llvm::DenseMap<Decl *, Decl *> ImportedFromDecls;
 
     /// \brief Mapping from the already-imported declarations in the "from"
     /// context to the error status of the import of that declaration.
@@ -198,8 +203,12 @@ namespace clang {
 
     /// \brief Return the copy of the given declaration in the "to" context if
     /// it has already been imported from the "from" context.  Otherwise return
-    /// NULL.
+    /// nullptr.
     Decl *GetAlreadyImportedOrNull(Decl *FromD);
+
+    /// \brief Return the translation unit from where the declaration was
+    /// imported. If it does not exist nullptr is returned.
+    TranslationUnitDecl *GetFromTU(Decl *ToD);
 
     /// \brief Return the declaration of the built-in type "__va_list_tag" from
     /// the ASTContext instead of importing it.

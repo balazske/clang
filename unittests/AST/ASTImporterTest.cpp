@@ -11,6 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+// Define this to have ::testing::Combine available.
+// FIXME: Better solution for this?
 #define GTEST_HAS_COMBINE 1
 
 #include "MatchVerifier.h"
@@ -2626,6 +2628,8 @@ TEST_P(ImportFunctions,
   EXPECT_EQ(ToM1, ToM2);
 }
 
+// First value in tuple: Compile options.
+// Second value in tuple: Source code to be used in the test.
 class ImportFunctionsVisibilityChain
     : public ASTImporterTestBase,
       public ::testing::WithParamInterface<
@@ -2635,6 +2639,12 @@ protected:
   std::string getCode() const { return std::get<1>(GetParam()); }
 };
 
+// First value in tuple: Compile options.
+// Second value in tuple: Tuple with informations for the test.
+// Code for first import (or initial code), code to import, whether the `f`
+// functions are expected to be linked in a declaration chain.
+// One value of this tuple is combined with every value of compile options.
+// The test can have a single tuple as parameter only.
 class ImportFunctionsVisibility
     : public ASTImporterTestBase,
       public ::testing::WithParamInterface<
@@ -2644,20 +2654,25 @@ protected:
   std::string getCode0() const { return std::get<0>(std::get<1>(GetParam())); }
   std::string getCode1() const { return std::get<1>(std::get<1>(GetParam())); }
   bool shouldBeLinked() const { return std::get<2>(std::get<1>(GetParam())); }
+
+  static decltype(functionDecl()) PatternF;
 };
 
-const char *ExternF = "void f();";
-const char *StaticF = "static void f();";
-const char *AnonF = "namespace { void f(); }";
+decltype(functionDecl()) ImportFunctionsVisibility::PatternF =
+    functionDecl(hasName("f"));
+
+auto *ExternF = "void f();";
+auto *StaticF = "static void f();";
+auto *AnonF = "namespace { void f(); }";
 
 TEST_P(ImportFunctionsVisibilityChain, ImportChain) {
   std::string Code = getCode() + getCode();
+  auto Pattern = functionDecl(hasName("f"));
+
   TranslationUnitDecl *FromTu = getTuDecl(Code, Lang_CXX, "input0.c");
 
-  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(
-      FromTu, functionDecl(hasName("f")));
-  auto *FromF1 =
-      LastDeclMatcher<FunctionDecl>().match(FromTu, functionDecl(hasName("f")));
+  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(FromTu, Pattern);
+  auto *FromF1 = LastDeclMatcher<FunctionDecl>().match(FromTu, Pattern);
 
   auto *ToF0 = Import(FromF0, Lang_CXX);
   auto *ToF1 = Import(FromF1, Lang_CXX);
@@ -2678,10 +2693,8 @@ TEST_P(ImportFunctionsVisibility, ImportAfter) {
   TranslationUnitDecl *ToTu = getToTuDecl(getCode0(), Lang_CXX);
   TranslationUnitDecl *FromTu = getTuDecl(getCode1(), Lang_CXX, "input1.cc");
 
-  auto *ToF0 =
-      FirstDeclMatcher<FunctionDecl>().match(ToTu, functionDecl(hasName("f")));
-  auto *FromF1 = FirstDeclMatcher<FunctionDecl>().match(
-      FromTu, functionDecl(hasName("f")));
+  auto *ToF0 = FirstDeclMatcher<FunctionDecl>().match(ToTu, PatternF);
+  auto *FromF1 = FirstDeclMatcher<FunctionDecl>().match(FromTu, PatternF);
 
   auto *ToF1 = Import(FromF1, Lang_CXX);
 
@@ -2699,10 +2712,8 @@ TEST_P(ImportFunctionsVisibility, ImportAfterImport) {
   TranslationUnitDecl *FromTu0 = getTuDecl(getCode0(), Lang_CXX, "input0.cc");
   TranslationUnitDecl *FromTu1 = getTuDecl(getCode1(), Lang_CXX, "input1.cc");
 
-  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(
-      FromTu0, functionDecl(hasName("f")));
-  auto *FromF1 = FirstDeclMatcher<FunctionDecl>().match(
-      FromTu1, functionDecl(hasName("f")));
+  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(FromTu0, PatternF);
+  auto *FromF1 = FirstDeclMatcher<FunctionDecl>().match(FromTu1, PatternF);
 
   auto *ToF0 = Import(FromF0, Lang_CXX);
   auto *ToF1 = Import(FromF1, Lang_CXX);
@@ -2717,27 +2728,33 @@ TEST_P(ImportFunctionsVisibility, ImportAfterImport) {
     EXPECT_FALSE(ToF1->getPreviousDecl());
 }
 
+bool ExpectLink = true;
+bool ExpectNotLink = false;
+
 auto ImportAfterParams =
-    ::testing::Values(std::make_tuple(ExternF, ExternF, true),
-                      std::make_tuple(ExternF, StaticF, false),
-                      std::make_tuple(ExternF, AnonF, false),
-                      std::make_tuple(StaticF, ExternF, false),
-                      std::make_tuple(StaticF, StaticF, false),
-                      std::make_tuple(StaticF, AnonF, false),
-                      std::make_tuple(AnonF, ExternF, false),
-                      std::make_tuple(AnonF, StaticF, false),
-                      std::make_tuple(AnonF, AnonF, false));
+    ::testing::Values(std::make_tuple(ExternF, ExternF, ExpectLink),
+                      std::make_tuple(ExternF, StaticF, ExpectNotLink),
+                      std::make_tuple(ExternF, AnonF, ExpectNotLink),
+                      std::make_tuple(StaticF, ExternF, ExpectNotLink),
+                      std::make_tuple(StaticF, StaticF, ExpectNotLink),
+                      std::make_tuple(StaticF, AnonF, ExpectNotLink),
+                      std::make_tuple(AnonF, ExternF, ExpectNotLink),
+                      std::make_tuple(AnonF, StaticF, ExpectNotLink),
+                      std::make_tuple(AnonF, AnonF, ExpectNotLink));
+
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportFunctionsVisibility,
+                        ::testing::Combine(DefaultTestValuesForRunOptions,
+                                           ImportAfterParams), );
 
 TEST_P(ImportFunctions, ImportFromDifferentScopedAnonNamespace) {
   TranslationUnitDecl *FromTu = getTuDecl(
       "namespace NS0 { namespace { void f(); } }"
       "namespace NS1 { namespace { void f(); } }",
       Lang_CXX, "input0.c");
+  auto Pattern = functionDecl(hasName("f"));
 
-  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(
-      FromTu, functionDecl(hasName("f")));
-  auto *FromF1 =
-      LastDeclMatcher<FunctionDecl>().match(FromTu, functionDecl(hasName("f")));
+  auto *FromF0 = FirstDeclMatcher<FunctionDecl>().match(FromTu, Pattern);
+  auto *FromF1 = LastDeclMatcher<FunctionDecl>().match(FromTu, Pattern);
 
   auto *ToF0 = Import(FromF0, Lang_CXX);
   auto *ToF1 = Import(FromF1, Lang_CXX);
@@ -2748,9 +2765,30 @@ TEST_P(ImportFunctions, ImportFromDifferentScopedAnonNamespace) {
   EXPECT_FALSE(ToF1->getPreviousDecl());
 }
 
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportFunctionsVisibility,
-                        ::testing::Combine(DefaultTestValuesForRunOptions,
-                                           ImportAfterParams), );
+TEST_P(ImportFunctions, ImportFunctionFromUnnamedNamespace) {
+  {
+    Decl *FromTU = getTuDecl("namespace { void f() {} } void g0() { f(); }",
+                             Lang_CXX, "input0.cc");
+    auto *FromD = FirstDeclMatcher<FunctionDecl>().match(
+        FromTU, functionDecl(hasName("g0")));
+
+    Import(FromD, Lang_CXX);
+  }
+  FunctionDecl *ImportedD1;
+  {
+    Decl *FromTU =
+        getTuDecl("namespace { void f() { int a; } } void g1() { f(); }",
+                  Lang_CXX, "input1.cc");
+    auto *FromD = FirstDeclMatcher<FunctionDecl>().match(
+        FromTU, functionDecl(hasName("g1")));
+    Import(FromD, Lang_CXX);
+  }
+
+  Decl *ToTU = ToAST->getASTContext().getTranslationUnitDecl();
+  cast<DeclContext>(ToTU)->dumpDeclContext();
+  ASSERT_EQ(DeclCounter<FunctionDecl>().match(ToTU, functionDecl(hasName("f"))),
+            2u);
+}
 
 struct ImportFriendFunctions : ImportFunctions {};
 

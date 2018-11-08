@@ -265,13 +265,16 @@ namespace clang {
       ToD->IdentifierNamespace = FromD->IdentifierNamespace;
       if (FromD->hasAttrs())
         for (const Attr *FromAttr : FromD->getAttrs()) {
-          // FIXME: Return of the error here is not possible until store of
-          // import errors is implemented.
+          // FIXME: Return of the error here is not possible until
+          // the error is not passed out from GetImportedOrCreateDecl.
           auto ToAttrOrErr = import(FromAttr);
           if (ToAttrOrErr)
             ToD->addAttr(*ToAttrOrErr);
-          else
+          else {
+            llvm::errs()
+                << "WARNING: Could not import an attribute of a Decl.\n";
             llvm::consumeError(ToAttrOrErr.takeError());
+          }
         }
       if (FromD->isUsed())
         ToD->setIsUsed();
@@ -7751,17 +7754,26 @@ Expected<Decl *> ASTImporter::Import(Decl *FromD) {
   ExpectedDecl ToDOrErr = Importer.Visit(FromD);
   if (!ToDOrErr) {
     // Failed to import.
-    // Take out the existing (probably invalid) object from the mapping.
-    // FIXME: There may be remaining references to the failed object.
-    ImportedDecls.erase(FromD);
+    auto Pos = ImportedDecls.find(FromD);
+    if (Pos != ImportedDecls.end()) {
+      // Import failed after the object was created.
+      // Remove all references to it.
+      if (LookupTable)
+        if (auto *ToND = dyn_cast<NamedDecl>(Pos->second))
+          LookupTable->remove(ToND);
+      ImportedFromDecls.erase(Pos->second);
+      ImportedDecls.erase(Pos);
+      // FIXME: AST may contain remaining references to the failed object.
+    }
+
     if (!getImportDeclErrorIfAny(FromD)) {
       // Error encountered for the first time.
-      // After takeError the error is not usable any more in ToDOrErr.
       // Get a copy of the error object (any more simple solution for this?).
       ImportError ErrOut;
       handleAllErrors(ToDOrErr.takeError(),
                       [&ErrOut](const ImportError &E) { ErrOut = E; });
       setImportDeclError(FromD, ErrOut);
+      // Do not return ToDOrErr, error was taken out of it.
       return make_error<ImportError>(ErrOut);
     }
     return ToDOrErr;
@@ -7769,10 +7781,10 @@ Expected<Decl *> ASTImporter::Import(Decl *FromD) {
 
   ToD = *ToDOrErr;
 
-  // FIXME: Handle the "already imported with error" case. We can get here
+  // Handle the "already imported with error" case. We can get here
   // nullptr only if GetImportedOrCreateDecl returned nullptr (after a
   // previously failed create was requested).
-  // Later GetImportedOrCreateDecl can be updated to return the error.
+  // FIXME: Later GetImportedOrCreateDecl can be updated to return the error.
   if (!ToD) {
     auto Err = getImportDeclErrorIfAny(FromD);
     assert(Err);

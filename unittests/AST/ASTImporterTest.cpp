@@ -971,7 +971,7 @@ TEST_P(ImportExpr, DependentSizedArrayType) {
           has(fieldDecl(hasType(dependentSizedArrayType())))))));
 }
 
-TEST_P(ASTImporterOptionSpecificTestBase, ImportStartLocationOfDeclRefExpr) {
+TEST_P(ASTImporterOptionSpecificTestBase, ImportBeginLocOfDeclRefExpr) {
   Decl *FromTU = getTuDecl(
       "class A { public: static int X; }; void f() { (void)A::X; }", Lang_CXX);
   auto From = FirstDeclMatcher<FunctionDecl>().match(

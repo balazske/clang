@@ -45,7 +45,7 @@ class TestImportBase : public CompilerOptionSpecificTest,
 
     if (Imported) {
       // This should dump source locations and assert if some source locations
-      // were not imported.
+      // were not imported. Does not find all error cases.
       SmallString<1024> ImportChecker;
       llvm::raw_svector_ostream ToNothing(ImportChecker);
       ToCtx.getTranslationUnitDecl()->print(ToNothing);

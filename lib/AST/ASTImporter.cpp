@@ -13,9 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/AST/ASTImporter.h"
-#include "clang/AST/ASTImporterLookupTable.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTDiagnostic.h"
+#include "clang/AST/ASTImporterLookupTable.h"
 #include "clang/AST/ASTStructuralEquivalence.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
@@ -43,6 +43,7 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/AST/TypeLocVisitor.h"
 #include "clang/AST/TypeVisitor.h"
 #include "clang/AST/UnresolvedSet.h"
 #include "clang/Basic/ExceptionSpecificationType.h"
@@ -384,8 +385,6 @@ namespace clang {
     Error ImportDefinition(
         ObjCProtocolDecl *From, ObjCProtocolDecl *To,
         ImportDefinitionKind Kind = IDK_Default);
-    Expected<TemplateParameterList *> ImportTemplateParameterList(
-        TemplateParameterList *Params);
     Error ImportTemplateArguments(
         const TemplateArgument *FromArgs, unsigned NumFromArgs,
         SmallVectorImpl<TemplateArgument> &ToArgs);
@@ -407,6 +406,8 @@ namespace clang {
     Expected<FunctionTemplateAndArgsTy>
     ImportFunctionTemplateWithTemplateArgsFromSpecialization(
         FunctionDecl *FromFD);
+    Error ImportTemplateParameterLists(const DeclaratorDecl *FromD,
+                                       DeclaratorDecl *ToD);
 
     Error ImportTemplateInformation(FunctionDecl *FromFD, FunctionDecl *ToFD);
 
@@ -621,7 +622,21 @@ namespace clang {
 
     Expected<FunctionDecl *> FindFunctionTemplateSpecialization(
         FunctionDecl *FromFD);
+
+    friend class TypeLocImporter;
   };
+
+template <typename InContainerTy>
+Error ASTNodeImporter::ImportTemplateArgumentListInfo(
+    const InContainerTy &Container, TemplateArgumentListInfo &ToTAInfo) {
+  for (const auto &FromLoc : Container) {
+    if (auto ToLocOrErr = import(FromLoc))
+      ToTAInfo.addArgument(*ToLocOrErr);
+    else
+      return ToLocOrErr.takeError();
+  }
+  return Error::success();
+}
 
 template <typename InContainerTy>
 Error ASTNodeImporter::ImportTemplateArgumentListInfo(
@@ -706,6 +721,22 @@ ASTNodeImporter::import(TemplateParameterList *From) {
       To,
       *ToRAngleLocOrErr,
       *ToRequiresClause);
+}
+
+Error ASTNodeImporter::ImportTemplateParameterLists(const DeclaratorDecl *FromD,
+                                                    DeclaratorDecl *ToD) {
+  unsigned int Num = FromD->getNumTemplateParameterLists();
+  if (Num == 0)
+    return Error::success();
+  SmallVector<TemplateParameterList *, 2> ToTPLists(Num);
+  for (unsigned int I = 0; I < Num; ++I)
+    if (Expected<TemplateParameterList *> ToTPListOrErr =
+            import(FromD->getTemplateParameterList(I)))
+      ToTPLists[I] = *ToTPListOrErr;
+    else
+      return ToTPListOrErr.takeError();
+  ToD->setTemplateParameterListsInfo(Importer.ToContext, ToTPLists);
+  return Error::success();
 }
 
 template <>
@@ -1902,40 +1933,6 @@ Error ASTNodeImporter::ImportDefinition(
   return Error::success();
 }
 
-// FIXME: Remove this, use `import` instead.
-Expected<TemplateParameterList *> ASTNodeImporter::ImportTemplateParameterList(
-    TemplateParameterList *Params) {
-  SmallVector<NamedDecl *, 4> ToParams(Params->size());
-  if (Error Err = ImportContainerChecked(*Params, ToParams))
-    return std::move(Err);
-
-  Expr *ToRequiresClause;
-  if (Expr *const R = Params->getRequiresClause()) {
-    if (Error Err = importInto(ToRequiresClause, R))
-      return std::move(Err);
-  } else {
-    ToRequiresClause = nullptr;
-  }
-
-  auto ToTemplateLocOrErr = import(Params->getTemplateLoc());
-  if (!ToTemplateLocOrErr)
-    return ToTemplateLocOrErr.takeError();
-  auto ToLAngleLocOrErr = import(Params->getLAngleLoc());
-  if (!ToLAngleLocOrErr)
-    return ToLAngleLocOrErr.takeError();
-  auto ToRAngleLocOrErr = import(Params->getRAngleLoc());
-  if (!ToRAngleLocOrErr)
-    return ToRAngleLocOrErr.takeError();
-
-  return TemplateParameterList::Create(
-      Importer.getToContext(),
-      *ToTemplateLocOrErr,
-      *ToLAngleLocOrErr,
-      ToParams,
-      *ToRAngleLocOrErr,
-      ToRequiresClause);
-}
-
 Error ASTNodeImporter::ImportTemplateArguments(
     const TemplateArgument *FromArgs, unsigned NumFromArgs,
     SmallVectorImpl<TemplateArgument> &ToArgs) {
@@ -1953,18 +1950,6 @@ Error ASTNodeImporter::ImportTemplateArguments(
 Expected<TemplateArgument>
 ASTNodeImporter::ImportTemplateArgument(const TemplateArgument &From) {
   return import(From);
-}
-
-template <typename InContainerTy>
-Error ASTNodeImporter::ImportTemplateArgumentListInfo(
-    const InContainerTy &Container, TemplateArgumentListInfo &ToTAInfo) {
-  for (const auto &FromLoc : Container) {
-    if (auto ToLocOrErr = import(FromLoc))
-      ToTAInfo.addArgument(*ToLocOrErr);
-    else
-      return ToLocOrErr.takeError();
-  }
-  return Error::success();
 }
 
 static StructuralEquivalenceKind
@@ -2204,6 +2189,9 @@ ExpectedDecl ASTNodeImporter::VisitNamespaceDecl(NamespaceDecl *D) {
   ExpectedSLoc BeginLocOrErr = import(D->getBeginLoc());
   if (!BeginLocOrErr)
     return BeginLocOrErr.takeError();
+  ExpectedSLoc RBraceLocOrErr = import(D->getRBraceLoc());
+  if (!RBraceLocOrErr)
+    return RBraceLocOrErr.takeError();
 
   // Create the "to" namespace, if needed.
   NamespaceDecl *ToNamespace = MergeWithNamespace;
@@ -2213,6 +2201,7 @@ ExpectedDecl ASTNodeImporter::VisitNamespaceDecl(NamespaceDecl *D) {
             *BeginLocOrErr, Loc, Name.getAsIdentifierInfo(),
             /*PrevDecl=*/nullptr))
       return ToNamespace;
+    ToNamespace->setRBraceLoc(*RBraceLocOrErr);
     ToNamespace->setLexicalDeclContext(LexicalDC);
     LexicalDC->addDeclInternal(ToNamespace);
 
@@ -2751,6 +2740,10 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
     LexicalDC->addDeclInternal(D2);
   }
 
+  if (auto BraceRangeOrErr = import(D->getBraceRange()))
+    D2->setBraceRange(*BraceRangeOrErr);
+  else
+    return BraceRangeOrErr.takeError();
   if (auto QualifierLocOrErr = import(D->getQualifierLoc()))
     D2->setQualifierInfo(*QualifierLocOrErr);
   else
@@ -2869,6 +2862,9 @@ Error ASTNodeImporter::ImportTemplateInformation(
     ExpectedSLoc POIOrErr = import(FTSInfo->getPointOfInstantiation());
     if (!POIOrErr)
       return POIOrErr.takeError();
+
+    if (Error Err = ImportTemplateParameterLists(FromFD, ToFD))
+      return Err;
 
     TemplateSpecializationKind TSK = FTSInfo->getTemplateSpecializationKind();
     ToFD->setFunctionTemplateSpecialization(
@@ -3435,7 +3431,7 @@ ExpectedDecl ASTNodeImporter::VisitFriendDecl(FriendDecl *D) {
   SmallVector<TemplateParameterList *, 1> ToTPLists(D->NumTPLists);
   auto **FromTPLists = D->getTrailingObjects<TemplateParameterList *>();
   for (unsigned I = 0; I < D->NumTPLists; I++) {
-    if (auto ListOrErr = ImportTemplateParameterList(FromTPLists[I]))
+    if (auto ListOrErr = import(FromTPLists[I]))
       ToTPLists[I] = *ListOrErr;
     else
       return ListOrErr.takeError();
@@ -4871,8 +4867,7 @@ ASTNodeImporter::VisitTemplateTemplateParmDecl(TemplateTemplateParmDecl *D) {
     return LocationOrErr.takeError();
 
   // Import template parameters.
-  auto TemplateParamsOrErr = ImportTemplateParameterList(
-      D->getTemplateParameters());
+  auto TemplateParamsOrErr = import(D->getTemplateParameters());
   if (!TemplateParamsOrErr)
     return TemplateParamsOrErr.takeError();
 
@@ -4956,8 +4951,7 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
     return std::move(Err);
 
   // Create the class template declaration itself.
-  auto TemplateParamsOrErr = ImportTemplateParameterList(
-      D->getTemplateParameters());
+  auto TemplateParamsOrErr = import(D->getTemplateParameters());
   if (!TemplateParamsOrErr)
     return TemplateParamsOrErr.takeError();
 
@@ -5091,8 +5085,7 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateSpecializationDecl(
       return std::move(Err);
     CanonInjType = CanonInjType.getCanonicalType();
 
-    auto ToTPListOrErr = ImportTemplateParameterList(
-        PartialSpec->getTemplateParameters());
+    auto ToTPListOrErr = import(PartialSpec->getTemplateParameters());
     if (!ToTPListOrErr)
       return ToTPListOrErr.takeError();
 
@@ -5126,6 +5119,11 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateSpecializationDecl(
   }
 
   D2->setSpecializationKind(D->getSpecializationKind());
+
+  if (auto BraceRangeOrErr = import(D->getBraceRange()))
+    D2->setBraceRange(*BraceRangeOrErr);
+  else
+    return BraceRangeOrErr.takeError();
 
   // Import the qualifier, if any.
   if (auto LocOrErr = import(D->getQualifierLoc()))
@@ -5246,8 +5244,7 @@ ExpectedDecl ASTNodeImporter::VisitVarTemplateDecl(VarTemplateDecl *D) {
     return std::move(Err);
 
   // Create the variable template declaration itself.
-  auto TemplateParamsOrErr = ImportTemplateParameterList(
-      D->getTemplateParameters());
+  auto TemplateParamsOrErr = import(D->getTemplateParameters());
   if (!TemplateParamsOrErr)
     return TemplateParamsOrErr.takeError();
 
@@ -5352,8 +5349,7 @@ ExpectedDecl ASTNodeImporter::VisitVarTemplateSpecializationDecl(
           *FromTAArgsAsWritten, ArgInfos))
         return std::move(Err);
 
-      auto ToTPListOrErr = ImportTemplateParameterList(
-          FromPartial->getTemplateParameters());
+      auto ToTPListOrErr = import(FromPartial->getTemplateParameters());
       if (!ToTPListOrErr)
         return ToTPListOrErr.takeError();
 
@@ -5460,8 +5456,7 @@ ASTNodeImporter::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
     } // for
   }
 
-  auto ParamsOrErr = ImportTemplateParameterList(
-      D->getTemplateParameters());
+  auto ParamsOrErr = import(D->getTemplateParameters());
   if (!ParamsOrErr)
     return ParamsOrErr.takeError();
 
@@ -6103,7 +6098,7 @@ ExpectedStmt ASTNodeImporter::VisitDeclRefExpr(DeclRefExpr *E) {
   TemplateArgumentListInfo *ToResInfo = nullptr;
   if (E->hasExplicitTemplateArgs()) {
     if (Error Err =
-        ImportTemplateArgumentListInfo(E->template_arguments(), ToTAInfo))
+        ImportTemplateArgumentListInfo(E->getLAngleLoc(), E->getRAngleLoc(), E->template_arguments(), ToTAInfo))
       return std::move(Err);
     ToResInfo = &ToTAInfo;
   }
@@ -7670,20 +7665,522 @@ Expected<QualType> ASTImporter::Import(QualType FromT) {
   return ToContext.getQualifiedType(*ToTOrErr, FromT.getLocalQualifiers());
 }
 
+namespace clang {
+
+class TypeLocImporter : public TypeLocVisitor<TypeLocImporter, Error> {
+  ASTImporter &Importer;
+  TypeLoc ToL;
+
+public:
+  TypeLocImporter(ASTImporter &Importer, TypeLoc ToL)
+      : Importer(Importer), ToL(ToL) {}
+
+  Error VisitTypeSpecTypeLoc(TypeSpecTypeLoc From) {
+    auto To = ToL.castAs<TypeSpecTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
+      To.setNameLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitTypedefTypeLoc(TypedefTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitInjectedClassNameTypeLoc(InjectedClassNameTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitUnresolvedUsingTypeLoc(UnresolvedUsingTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitRecordTypeLoc(RecordTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitEnumTypeLoc(EnumTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitTemplateTypeParmTypeLoc(TemplateTypeParmTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitSubstTemplateTypeParmTypeLoc(SubstTemplateTypeParmTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error
+  VisitSubstTemplateTypeParmPackTypeLoc(SubstTemplateTypeParmPackTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitVectorTypeLoc(VectorTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitDependentVectorTypeLoc(DependentVectorTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitExtVectorTypeLoc(ExtVectorTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error
+  VisitDependentSizedExtVectorTypeLoc(DependentSizedExtVectorTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitComplexTypeLoc(ComplexTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitDecltypeTypeLoc(DecltypeTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitDeducedTypeLoc(DeducedTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitAutoTypeLoc(AutoTypeLoc From) {
+    return VisitTypeSpecTypeLoc(From);
+  }
+
+  Error VisitBuiltinTypeLoc(BuiltinTypeLoc From) {
+    auto To = ToL.castAs<BuiltinTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getBuiltinLoc()))
+      To.setBuiltinLoc(*L);
+    else
+      return L.takeError();
+    // FIXME: Import other attributes?
+    return Error::success();
+  }
+
+  Error VisitParenTypeLoc(ParenTypeLoc From) {
+    auto To = ToL.castAs<ParenTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getLParenLoc()))
+      To.setLParenLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRParenLoc()))
+      To.setRParenLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitBlockPointerTypeLoc(BlockPointerTypeLoc From) {
+    auto To = ToL.castAs<BlockPointerTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getCaretLoc()))
+      To.setCaretLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitMemberPointerTypeLoc(MemberPointerTypeLoc From) {
+    auto To = ToL.castAs<MemberPointerTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getStarLoc()))
+      To.setStarLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitLValueReferenceTypeLoc(LValueReferenceTypeLoc From) {
+    auto To = ToL.castAs<LValueReferenceTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getAmpLoc()))
+      To.setAmpLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitRValueReferenceTypeLoc(RValueReferenceTypeLoc From) {
+    auto To = ToL.castAs<RValueReferenceTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getAmpAmpLoc()))
+      To.setAmpAmpLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitFunctionTypeLoc(FunctionTypeLoc From) {
+    auto To = ToL.castAs<FunctionTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getLocalRangeBegin()))
+      To.setLocalRangeBegin(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getLocalRangeEnd()))
+      To.setLocalRangeEnd(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getLParenLoc()))
+      To.setLParenLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRParenLoc()))
+      To.setRParenLoc(*L);
+    else
+      return L.takeError();
+    if (Expected<SourceRange> R = Importer.Import(From.getExceptionSpecRange()))
+      To.setExceptionSpecRange(*R);
+    else
+      return R.takeError();
+    for (unsigned I = 0; I < From.getNumParams(); ++I) {
+      // FIXME: Import params?
+      // (avoided because import of a Decl may cause complication)
+      To.setParam(I, nullptr);
+    }
+    return Error::success();
+  }
+
+  Error VisitArrayTypeLoc(ArrayTypeLoc From) {
+    auto To = ToL.castAs<ArrayTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getLBracketLoc()))
+      To.setLBracketLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRBracketLoc()))
+      To.setRBracketLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedExpr E = Importer.Import(From.getSizeExpr()))
+      To.setSizeExpr(*E);
+    else
+      return E.takeError();
+    return Error::success();
+  }
+
+  Error VisitTemplateSpecializationTypeLoc(TemplateSpecializationTypeLoc From) {
+    auto To = ToL.castAs<TemplateSpecializationTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getTemplateKeywordLoc()))
+      To.setTemplateKeywordLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getLAngleLoc()))
+      To.setLAngleLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRAngleLoc()))
+      To.setRAngleLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getTemplateNameLoc()))
+      To.setTemplateNameLoc(*L);
+    else
+      return L.takeError();
+    ASTNodeImporter NodeImporter(Importer);
+    for (unsigned I = 0; I < From.getNumArgs(); ++I) {
+      if (Expected<TemplateArgumentLoc> TAL =
+              NodeImporter.import(From.getArgLoc(I)))
+        To.setArgLocInfo(I, TAL->getLocInfo());
+      else
+        return TAL.takeError();
+    }
+
+    return Error::success();
+  }
+
+  Error VisitDependentAddressSpaceTypeLoc(DependentAddressSpaceTypeLoc From) {
+    auto To = ToL.castAs<DependentAddressSpaceTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getAttrNameLoc()))
+      To.setAttrNameLoc(*L);
+    else
+      return L.takeError();
+    if (Expected<SourceRange> R =
+            Importer.Import(From.getAttrOperandParensRange()))
+      To.setAttrOperandParensRange(*R);
+    else
+      return R.takeError();
+    // FIXME: Import other things?
+    return Error::success();
+  }
+
+  Error VisitTypeOfTypeLoc(TypeOfTypeLoc From) {
+    auto To = ToL.castAs<TypeOfTypeLoc>();
+    if (Expected<TypeSourceInfo *> TSI =
+            Importer.Import(From.getUnderlyingTInfo()))
+      To.setUnderlyingTInfo(*TSI);
+    else
+      return TSI.takeError();
+    return Error::success();
+  }
+
+  Error VisitUnaryTransformTypeLoc(UnaryTransformTypeLoc From) {
+    auto To = ToL.castAs<UnaryTransformTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getKWLoc()))
+      To.setKWLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getLParenLoc()))
+      To.setLParenLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRParenLoc()))
+      To.setRParenLoc(*L);
+    else
+      return L.takeError();
+    if (Expected<TypeSourceInfo *> TSI =
+            Importer.Import(From.getUnderlyingTInfo()))
+      To.setUnderlyingTInfo(*TSI);
+    else
+      return TSI.takeError();
+    return Error::success();
+  }
+
+  Error VisitDeducedTemplateSpecializationTypeLoc(
+      DeducedTemplateSpecializationTypeLoc From) {
+    auto To = ToL.castAs<DeducedTemplateSpecializationTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getTemplateNameLoc()))
+      To.setTemplateNameLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitElaboratedTypeLoc(ElaboratedTypeLoc From) {
+    auto To = ToL.castAs<ElaboratedTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getElaboratedKeywordLoc()))
+      To.setElaboratedKeywordLoc(*L);
+    else
+      return L.takeError();
+    if (Expected<NestedNameSpecifierLoc> L =
+            Importer.Import(From.getQualifierLoc()))
+      To.setQualifierLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitDependentNameTypeLoc(DependentNameTypeLoc From) {
+    auto To = ToL.castAs<DependentNameTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getElaboratedKeywordLoc()))
+      To.setElaboratedKeywordLoc(*L);
+    else
+      return L.takeError();
+    if (Expected<NestedNameSpecifierLoc> L =
+            Importer.Import(From.getQualifierLoc()))
+      To.setQualifierLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
+      To.setNameLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitDependentTemplateSpecializationTypeLoc(
+      DependentTemplateSpecializationTypeLoc From) {
+    auto To = ToL.castAs<DependentTemplateSpecializationTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getElaboratedKeywordLoc()))
+      To.setElaboratedKeywordLoc(*L);
+    else
+      return L.takeError();
+    if (Expected<NestedNameSpecifierLoc> L =
+            Importer.Import(From.getQualifierLoc()))
+      To.setQualifierLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getTemplateKeywordLoc()))
+      To.setTemplateKeywordLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getTemplateNameLoc()))
+      To.setTemplateNameLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getLAngleLoc()))
+      To.setLAngleLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRAngleLoc()))
+      To.setRAngleLoc(*L);
+    else
+      return L.takeError();
+    ASTNodeImporter NodeImporter(Importer);
+    for (unsigned I = 0; I < From.getNumArgs(); ++I) {
+      if (Expected<TemplateArgumentLoc> TAL =
+              NodeImporter.import(From.getArgLoc(I)))
+        To.setArgLocInfo(I, TAL->getLocInfo());
+      else
+        return TAL.takeError();
+    }
+    return Error::success();
+  }
+
+  Error VisitPackExpansionTypeLoc(PackExpansionTypeLoc From) {
+    auto To = ToL.castAs<PackExpansionTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getEllipsisLoc()))
+      To.setEllipsisLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitAtomicTypeLoc(AtomicTypeLoc From) {
+    auto To = ToL.castAs<AtomicTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getKWLoc()))
+      To.setKWLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getLParenLoc()))
+      To.setLParenLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getRParenLoc()))
+      To.setRParenLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitPipeTypeLoc(PipeTypeLoc From) {
+    auto To = ToL.castAs<PipeTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getKWLoc()))
+      To.setKWLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitObjCTypeParamTypeLoc(ObjCTypeParamTypeLoc From) {
+    auto To = ToL.castAs<ObjCTypeParamTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
+      To.setNameLoc(*L);
+    else
+      return L.takeError();
+    if (From.getNumProtocols()) {
+      if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
+        To.setProtocolLAngleLoc(*L);
+      else
+        return L.takeError();
+      if (ExpectedSLoc L = Importer.Import(From.getProtocolRAngleLoc()))
+        To.setProtocolRAngleLoc(*L);
+      else
+        return L.takeError();
+      for (unsigned I = 0; I < From.getNumProtocols(); ++I) {
+        if (ExpectedSLoc L = Importer.Import(From.getProtocolLoc(I)))
+          To.setProtocolLoc(I, *L);
+        else
+          return L.takeError();
+      }
+    }
+    return Error::success();
+  }
+
+  Error VisitObjCObjectTypeLoc(ObjCObjectTypeLoc From) {
+    auto To = ToL.castAs<ObjCObjectTypeLoc>();
+
+    if (From.getNumTypeArgs()) {
+      if (ExpectedSLoc L = Importer.Import(From.getTypeArgsLAngleLoc()))
+        To.setTypeArgsLAngleLoc(*L);
+      else
+        return L.takeError();
+      if (ExpectedSLoc L = Importer.Import(From.getTypeArgsRAngleLoc()))
+        To.setTypeArgsRAngleLoc(*L);
+      else
+        return L.takeError();
+
+      for (unsigned I = 0; I < From.getNumTypeArgs(); ++I) {
+        if (Expected<TypeSourceInfo *> TSI =
+                Importer.Import(From.getTypeArgTInfo(I)))
+          To.setTypeArgTInfo(I, *TSI);
+        else
+          return TSI.takeError();
+      }
+    }
+
+    if (From.getNumProtocols()) {
+      if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
+        To.setProtocolLAngleLoc(*L);
+      else
+        return L.takeError();
+      if (ExpectedSLoc L = Importer.Import(From.getProtocolRAngleLoc()))
+        To.setProtocolRAngleLoc(*L);
+      else
+        return L.takeError();
+
+      for (unsigned I = 0; I < From.getNumProtocols(); ++I) {
+        if (ExpectedSLoc L = Importer.Import(From.getProtocolLoc(I)))
+          To.setProtocolLoc(I, *L);
+        else
+          return L.takeError();
+      }
+    }
+
+    To.setHasBaseTypeAsWritten(From.hasBaseTypeAsWritten());
+
+    return Error::success();
+  }
+
+  Error VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc From) {
+    if (Error Err = VisitObjCObjectTypeLoc(From))
+      return std::move(Err);
+
+    auto To = ToL.castAs<ObjCInterfaceTypeLoc>();
+
+    if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
+      To.setNameLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getNameEndLoc()))
+      To.setNameEndLoc(*L);
+    else
+      return L.takeError();
+
+    return Error::success();
+  }
+
+  Error VisitObjCObjectPointerTypeLoc(ObjCObjectPointerTypeLoc From) {
+    auto To = ToL.castAs<ObjCObjectPointerTypeLoc>();
+    if (ExpectedSLoc L = Importer.Import(From.getStarLoc()))
+      To.setStarLoc(*L);
+    else
+      return L.takeError();
+    return Error::success();
+  }
+
+  Error VisitTypeLoc(TypeLoc TyLoc) { return Error::success(); }
+};
+
+} // namespace clang
+
 Expected<TypeSourceInfo *> ASTImporter::Import(TypeSourceInfo *FromTSI) {
   if (!FromTSI)
     return FromTSI;
 
-  // FIXME: For now we just create a "trivial" type source info based
-  // on the type and a single location. Implement a real version of this.
   ExpectedType TOrErr = Import(FromTSI->getType());
   if (!TOrErr)
     return TOrErr.takeError();
-  ExpectedSLoc BeginLocOrErr = Import(FromTSI->getTypeLoc().getBeginLoc());
-  if (!BeginLocOrErr)
-    return BeginLocOrErr.takeError();
 
-  return ToContext.getTrivialTypeSourceInfo(*TOrErr, *BeginLocOrErr);
+  if (Minimal) {
+    ExpectedSLoc BeginLocOrErr = Import(FromTSI->getTypeLoc().getBeginLoc());
+    if (!BeginLocOrErr)
+      return BeginLocOrErr.takeError();
+
+    return ToContext.getTrivialTypeSourceInfo(*TOrErr, *BeginLocOrErr);
+  }
+
+  TypeSourceInfo *ToTSI = ToContext.CreateTypeSourceInfo(*TOrErr);
+
+  TypeLoc FromL = FromTSI->getTypeLoc();
+  TypeLoc ToL = ToTSI->getTypeLoc();
+  while (FromL) {
+    assert(ToL && "Not consistent TypeSourceInfo");
+    TypeLocImporter Importer(*this, ToL);
+    if (Error Err = Importer.Visit(FromL))
+      return std::move(Err);
+    FromL = FromL.getNextTypeLoc();
+    ToL = ToL.getNextTypeLoc();
+  }
+
+  return ToTSI;
 }
 
 Expected<Attr *> ASTImporter::Import(const Attr *FromAttr) {
@@ -7996,8 +8493,12 @@ ASTImporter::Import(NestedNameSpecifierLoc FromNNS) {
         return std::move(Err);
       TypeSourceInfo *TSI = getToContext().getTrivialTypeSourceInfo(
             QualType(Spec->getAsType(), 0), ToTLoc);
-      Builder.Extend(getToContext(), ToLocalBeginLoc, TSI->getTypeLoc(),
-                     ToLocalEndLoc);
+      if (Kind == NestedNameSpecifier::TypeSpecWithTemplate)
+        Builder.Extend(getToContext(), ToLocalBeginLoc, TSI->getTypeLoc(),
+                       ToLocalEndLoc);
+      else
+        Builder.Extend(getToContext(), SourceLocation{}, TSI->getTypeLoc(),
+                       ToLocalEndLoc);
       break;
     }
 

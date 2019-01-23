@@ -7109,18 +7109,18 @@ ExpectedStmt
 ASTNodeImporter::VisitDependentScopeDeclRefExpr(DependentScopeDeclRefExpr *E) {
   auto Imp = importSeq(
       E->getQualifierLoc(), E->getTemplateKeywordLoc(), E->getDeclName(),
-      E->getExprLoc(), E->getLAngleLoc(), E->getRAngleLoc());
+      E->getNameInfo().getLoc(), E->getLAngleLoc(), E->getRAngleLoc());
   if (!Imp)
     return Imp.takeError();
 
   NestedNameSpecifierLoc ToQualifierLoc;
-  SourceLocation ToTemplateKeywordLoc, ToExprLoc, ToLAngleLoc, ToRAngleLoc;
+  SourceLocation ToTemplateKeywordLoc, ToNameLoc, ToLAngleLoc, ToRAngleLoc;
   DeclarationName ToDeclName;
   std::tie(
-      ToQualifierLoc, ToTemplateKeywordLoc, ToDeclName, ToExprLoc,
+      ToQualifierLoc, ToTemplateKeywordLoc, ToDeclName, ToNameLoc,
       ToLAngleLoc, ToRAngleLoc) = *Imp;
 
-  DeclarationNameInfo ToNameInfo(ToDeclName, ToExprLoc);
+  DeclarationNameInfo ToNameInfo(ToDeclName, ToNameLoc);
   if (Error Err = ImportDeclarationNameLoc(E->getNameInfo(), ToNameInfo))
     return std::move(Err);
 
@@ -7185,7 +7185,7 @@ ASTNodeImporter::VisitUnresolvedLookupExpr(UnresolvedLookupExpr *E) {
     else
       return ToDOrErr.takeError();
 
-  if (E->hasExplicitTemplateArgs() && E->getTemplateKeywordLoc().isValid()) {
+  if (E->hasExplicitTemplateArgs()) {
     TemplateArgumentListInfo ToTAInfo;
     if (Error Err = ImportTemplateArgumentListInfo(
         E->getLAngleLoc(), E->getRAngleLoc(), E->template_arguments(),
@@ -7239,8 +7239,10 @@ ASTNodeImporter::VisitUnresolvedMemberExpr(UnresolvedMemberExpr *E) {
   TemplateArgumentListInfo ToTAInfo;
   TemplateArgumentListInfo *ResInfo = nullptr;
   if (E->hasExplicitTemplateArgs()) {
+    TemplateArgumentListInfo FromTAInfo;
+    E->copyTemplateArgumentsInto(FromTAInfo);
     if (Error Err =
-        ImportTemplateArgumentListInfo(E->template_arguments(), ToTAInfo))
+        ImportTemplateArgumentListInfo(FromTAInfo, ToTAInfo))
       return std::move(Err);
     ResInfo = &ToTAInfo;
   }

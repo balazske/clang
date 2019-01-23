@@ -53,6 +53,8 @@ class TestImportBase : public CompilerOptionSpecificTest,
       // This traverses the AST to catch certain bugs like poorly or not
       // implemented subtrees.
       (*Imported)->dump(ToNothing);
+
+      checkImportedSourceLocations(Node, *Imported);
     }
 
     return Imported;
@@ -1998,7 +2000,6 @@ TEST_P(ImportFunctions, ImportImplicitFunctionsInLambda) {
       FromTU, functionDecl(hasName("foo")));
   auto *ToD = Import(FromD, Lang_CXX);
   EXPECT_TRUE(ToD);
-  Decl *ToTU = ToAST->getASTContext().getTranslationUnitDecl();
   CXXRecordDecl *LambdaRec =
       cast<LambdaExpr>(cast<CStyleCastExpr>(
                            *cast<CompoundStmt>(ToD->getBody())->body_begin())

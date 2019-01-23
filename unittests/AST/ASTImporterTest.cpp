@@ -50,10 +50,7 @@ class TestImportBase : public CompilerOptionSpecificTest,
       llvm::raw_svector_ostream ToNothing(ImportChecker);
       ToCtx.getTranslationUnitDecl()->print(ToNothing);
 
-      // This traverses the AST to catch certain bugs like poorly or not
-      // implemented subtrees.
-      (*Imported)->dump(ToNothing);
-
+      // More detailed source location checks.
       checkImportedSourceLocations(Node, *Imported);
     }
 

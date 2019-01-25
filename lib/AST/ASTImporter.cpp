@@ -8053,10 +8053,10 @@ public:
 
   Error VisitObjCTypeParamTypeLoc(ObjCTypeParamTypeLoc From) {
     auto To = ToL.castAs<ObjCTypeParamTypeLoc>();
-    if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
+    /*if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
       To.setNameLoc(*L);
     else
-      return L.takeError();
+      return L.takeError();*/
     if (From.getNumProtocols()) {
       if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
         To.setProtocolLAngleLoc(*L);
@@ -8079,7 +8079,7 @@ public:
   Error VisitObjCObjectTypeLoc(ObjCObjectTypeLoc From) {
     auto To = ToL.castAs<ObjCObjectTypeLoc>();
 
-    if (From.getNumTypeArgs()) {
+    //if (From.getNumTypeArgs()) {
       if (ExpectedSLoc L = Importer.Import(From.getTypeArgsLAngleLoc()))
         To.setTypeArgsLAngleLoc(*L);
       else
@@ -8096,9 +8096,9 @@ public:
         else
           return TSI.takeError();
       }
-    }
+    //}
 
-    if (From.getNumProtocols()) {
+    //if (From.getNumProtocols()) {
       if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
         To.setProtocolLAngleLoc(*L);
       else
@@ -8113,7 +8113,7 @@ public:
           To.setProtocolLoc(I, *L);
         else
           return L.takeError();
-      }
+      //}
     }
 
     To.setHasBaseTypeAsWritten(From.hasBaseTypeAsWritten());
@@ -8122,8 +8122,8 @@ public:
   }
 
   Error VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc From) {
-    if (Error Err = VisitObjCObjectTypeLoc(From))
-      return std::move(Err);
+    //if (Error Err = VisitObjCObjectTypeLoc(From))
+    //  return std::move(Err);
 
     auto To = ToL.castAs<ObjCInterfaceTypeLoc>();
 
@@ -8131,10 +8131,10 @@ public:
       To.setNameLoc(*L);
     else
       return L.takeError();
-    if (ExpectedSLoc L = Importer.Import(From.getNameEndLoc()))
+    /*if (ExpectedSLoc L = Importer.Import(From.getNameEndLoc()))
       To.setNameEndLoc(*L);
     else
-      return L.takeError();
+      return L.takeError();*/
 
     return Error::success();
   }

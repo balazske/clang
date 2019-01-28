@@ -7669,6 +7669,9 @@ Expected<QualType> ASTImporter::Import(QualType FromT) {
 
 namespace clang {
 
+// Import TypeLoc information.
+// TypeLocReader in ASTReader.cpp gives hints about what to import.
+// (At some ObjC types not every existing location is copied.)
 class TypeLocImporter : public TypeLocVisitor<TypeLocImporter, Error> {
   ASTImporter &Importer;
   TypeLoc ToL;
@@ -8053,10 +8056,6 @@ public:
 
   Error VisitObjCTypeParamTypeLoc(ObjCTypeParamTypeLoc From) {
     auto To = ToL.castAs<ObjCTypeParamTypeLoc>();
-    /*if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
-      To.setNameLoc(*L);
-    else
-      return L.takeError();*/
     if (From.getNumProtocols()) {
       if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
         To.setProtocolLAngleLoc(*L);
@@ -8079,41 +8078,37 @@ public:
   Error VisitObjCObjectTypeLoc(ObjCObjectTypeLoc From) {
     auto To = ToL.castAs<ObjCObjectTypeLoc>();
 
-    //if (From.getNumTypeArgs()) {
-      if (ExpectedSLoc L = Importer.Import(From.getTypeArgsLAngleLoc()))
-        To.setTypeArgsLAngleLoc(*L);
-      else
-        return L.takeError();
-      if (ExpectedSLoc L = Importer.Import(From.getTypeArgsRAngleLoc()))
-        To.setTypeArgsRAngleLoc(*L);
-      else
-        return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getTypeArgsLAngleLoc()))
+      To.setTypeArgsLAngleLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getTypeArgsRAngleLoc()))
+      To.setTypeArgsRAngleLoc(*L);
+    else
+      return L.takeError();
 
-      for (unsigned I = 0; I < From.getNumTypeArgs(); ++I) {
-        if (Expected<TypeSourceInfo *> TSI =
-                Importer.Import(From.getTypeArgTInfo(I)))
-          To.setTypeArgTInfo(I, *TSI);
-        else
-          return TSI.takeError();
-      }
-    //}
+    for (unsigned I = 0; I < From.getNumTypeArgs(); ++I) {
+      if (Expected<TypeSourceInfo *> TSI =
+              Importer.Import(From.getTypeArgTInfo(I)))
+        To.setTypeArgTInfo(I, *TSI);
+      else
+        return TSI.takeError();
+    }
 
-    //if (From.getNumProtocols()) {
-      if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
-        To.setProtocolLAngleLoc(*L);
+    if (ExpectedSLoc L = Importer.Import(From.getProtocolLAngleLoc()))
+      To.setProtocolLAngleLoc(*L);
+    else
+      return L.takeError();
+    if (ExpectedSLoc L = Importer.Import(From.getProtocolRAngleLoc()))
+      To.setProtocolRAngleLoc(*L);
+    else
+      return L.takeError();
+
+    for (unsigned I = 0; I < From.getNumProtocols(); ++I) {
+      if (ExpectedSLoc L = Importer.Import(From.getProtocolLoc(I)))
+        To.setProtocolLoc(I, *L);
       else
         return L.takeError();
-      if (ExpectedSLoc L = Importer.Import(From.getProtocolRAngleLoc()))
-        To.setProtocolRAngleLoc(*L);
-      else
-        return L.takeError();
-
-      for (unsigned I = 0; I < From.getNumProtocols(); ++I) {
-        if (ExpectedSLoc L = Importer.Import(From.getProtocolLoc(I)))
-          To.setProtocolLoc(I, *L);
-        else
-          return L.takeError();
-      //}
     }
 
     To.setHasBaseTypeAsWritten(From.hasBaseTypeAsWritten());
@@ -8122,19 +8117,12 @@ public:
   }
 
   Error VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc From) {
-    //if (Error Err = VisitObjCObjectTypeLoc(From))
-    //  return std::move(Err);
-
     auto To = ToL.castAs<ObjCInterfaceTypeLoc>();
 
     if (ExpectedSLoc L = Importer.Import(From.getNameLoc()))
       To.setNameLoc(*L);
     else
       return L.takeError();
-    /*if (ExpectedSLoc L = Importer.Import(From.getNameEndLoc()))
-      To.setNameEndLoc(*L);
-    else
-      return L.takeError();*/
 
     return Error::success();
   }

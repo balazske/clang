@@ -3329,10 +3329,9 @@ ExpectedDecl ASTNodeImporter::VisitFriendDecl(FriendDecl *D) {
   // We try to maintain order and count of redundant friend declarations.
   auto *RD = cast<CXXRecordDecl>(DC);
   FriendDecl *ImportedFriend = RD->getFirstFriend();
-  SmallVector<FriendDecl *, 2> ImportedFriends;
+  SmallVector<FriendDecl *, 2> ImportedEquivalentFriends;
 
   while (ImportedFriend) {
-    // FIXME: Can we not use isStructuralMatch only?
     bool Match = false;
     if (D->getFriendDecl() && ImportedFriend->getFriendDecl()) {
       Match =
@@ -3344,16 +3343,18 @@ ExpectedDecl ASTNodeImporter::VisitFriendDecl(FriendDecl *D) {
           ImportedFriend->getFriendType()->getType(), /*Complain=*/false);
     }
     if (Match)
-      ImportedFriends.push_back(ImportedFriend);
+      ImportedEquivalentFriends.push_back(ImportedFriend);
 
     ImportedFriend = ImportedFriend->getNextFriend();
   }
   std::tuple<unsigned int, unsigned int> CountAndPosition =
       getFriendCountAndPosition(D);
-  if (ImportedFriends.size() >= std::get<0>(CountAndPosition))
-    return Importer.MapImported(D,
-                                ImportedFriends[std::get<1>(CountAndPosition)]);
-  // FIXME: Strict '>' above may indicate problem.
+
+  assert(ImportedEquivalentFriends.size() <= std::get<0>(CountAndPosition) &&
+         "Class with non-matching friends is imported, ODR check wrong?");
+  if (ImportedEquivalentFriends.size() == std::get<0>(CountAndPosition))
+    return Importer.MapImported(
+        D, ImportedEquivalentFriends[std::get<1>(CountAndPosition)]);
 
   // Not found. Create it.
   // The declarations will be put into order later by ImportDeclContext.

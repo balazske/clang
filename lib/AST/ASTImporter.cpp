@@ -2575,7 +2575,8 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
     D2 = D2CXX;
     D2->setAccess(D->getAccess());
     D2->setLexicalDeclContext(LexicalDC);
-    if (!DCXX->getDescribedClassTemplate() || DCXX->isImplicit())
+    if (D->getFriendObjectKind() == Decl::FOK_None &&
+        (!DCXX->getDescribedClassTemplate() || DCXX->isImplicit()))
       LexicalDC->addDeclInternal(D2);
 
     if (ClassTemplateDecl *FromDescribed =

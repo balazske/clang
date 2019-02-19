@@ -136,6 +136,15 @@ namespace clang {
       To->setIsUsed();
   }
 
+  void addDeclToDCIfVisible(Decl *From, Decl *To, DeclContext *ToDC,
+                            DeclContext *ToLexicalDC) {
+    if (From->getDeclContext()->containsDeclAndLoad(From))
+      ToDC->addDeclInternal(To);
+    if (ToDC != ToLexicalDC &&
+        From->getLexicalDeclContext()->containsDeclAndLoad(From))
+      ToLexicalDC->addDeclInternal(To);
+  }
+
   class ASTNodeImporter : public TypeVisitor<ASTNodeImporter, ExpectedType>,
                           public DeclVisitor<ASTNodeImporter, ExpectedDecl>,
                           public StmtVisitor<ASTNodeImporter, ExpectedStmt> {
@@ -2575,9 +2584,9 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
     D2 = D2CXX;
     D2->setAccess(D->getAccess());
     D2->setLexicalDeclContext(LexicalDC);
-    if (D->getFriendObjectKind() == Decl::FOK_None &&
-        (!DCXX->getDescribedClassTemplate() || DCXX->isImplicit()))
-      LexicalDC->addDeclInternal(D2);
+    addDeclToDCIfVisible(D, D2, DC, LexicalDC);
+    if (D->getFriendObjectKind() == Decl::FOK_Undeclared)
+      D2->getDeclContext()->getPrimaryContext()->makeDeclVisibleInContext(D2);
 
     if (ClassTemplateDecl *FromDescribed =
         DCXX->getDescribedClassTemplate()) {
@@ -2643,7 +2652,7 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
                                 Name.getAsIdentifierInfo(), PrevDecl))
       return D2;
     D2->setLexicalDeclContext(LexicalDC);
-    LexicalDC->addDeclInternal(D2);
+    addDeclToDCIfVisible(D, D2, DC, LexicalDC);
   }
 
   if (auto BraceRangeOrErr = import(D->getBraceRange()))
@@ -3097,11 +3106,7 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   if (Error Err = ImportTemplateInformation(D, ToFunction))
     return std::move(Err);
 
-  // TODO Can we generalize this approach to other AST nodes as well?
-  if (D->getDeclContext()->containsDeclAndLoad(D))
-    DC->addDeclInternal(ToFunction);
-  if (DC != LexicalDC && D->getLexicalDeclContext()->containsDeclAndLoad(D))
-    LexicalDC->addDeclInternal(ToFunction);
+  addDeclToDCIfVisible(D, ToFunction, DC, LexicalDC);
 
   if (auto *FromCXXMethod = dyn_cast<CXXMethodDecl>(D))
     ImportOverrides(cast<CXXMethodDecl>(ToFunction), FromCXXMethod);
@@ -3591,10 +3596,7 @@ ExpectedDecl ASTNodeImporter::VisitVarDecl(VarDecl *D) {
   if (D->isConstexpr())
     ToVar->setConstexpr(true);
 
-  if (D->getDeclContext()->containsDeclAndLoad(D))
-    DC->addDeclInternal(ToVar);
-  if (DC != LexicalDC && D->getLexicalDeclContext()->containsDeclAndLoad(D))
-    LexicalDC->addDeclInternal(ToVar);
+  addDeclToDCIfVisible(D, ToVar, DC, LexicalDC);
 
   // Import the rest of the chain. I.e. import all subsequent declarations.
   for (++RedeclIt; RedeclIt != Redecls.end(); ++RedeclIt) {
@@ -4911,10 +4913,7 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
   D2->setAccess(D->getAccess());
   D2->setLexicalDeclContext(LexicalDC);
 
-  if (D->getDeclContext()->containsDeclAndLoad(D))
-    DC->addDeclInternal(D2);
-  if (DC != LexicalDC && D->getLexicalDeclContext()->containsDeclAndLoad(D))
-    LexicalDC->addDeclInternal(D2);
+  addDeclToDCIfVisible(D, D2, DC, LexicalDC);
 
   if (FoundByLookup) {
     auto *Recent =

@@ -136,15 +136,6 @@ namespace clang {
       To->setIsUsed();
   }
 
-  void addDeclToDCIfVisible(Decl *From, Decl *To, DeclContext *ToDC,
-                            DeclContext *ToLexicalDC) {
-    if (From->getDeclContext()->containsDeclAndLoad(From))
-      ToDC->addDeclInternal(To);
-    if (ToDC != ToLexicalDC &&
-        From->getLexicalDeclContext()->containsDeclAndLoad(From))
-      ToLexicalDC->addDeclInternal(To);
-  }
-
   class ASTNodeImporter : public TypeVisitor<ASTNodeImporter, ExpectedType>,
                           public DeclVisitor<ASTNodeImporter, ExpectedDecl>,
                           public StmtVisitor<ASTNodeImporter, ExpectedStmt> {
@@ -289,6 +280,35 @@ namespace clang {
         ToD->setIsUsed();
       if (FromD->isImplicit())
         ToD->setImplicit();
+    }
+
+    void addDeclToContexts(Decl *FromD, Decl *ToD) {
+      if (!Importer.isMinimalImport()) {
+        bool Added = false;
+        if (FromD->getDeclContext()->containsDeclAndLoad(FromD)) {
+          ToD->getDeclContext()->addDeclInternal(ToD);
+          Added = true;
+        }
+        if (ToD->getDeclContext() != ToD->getLexicalDeclContext() &&
+            FromD->getLexicalDeclContext()->containsDeclAndLoad(FromD)) {
+          ToD->getLexicalDeclContext()->addDeclInternal(ToD);
+          Added = true;
+        }
+        if (auto *FromTD = dyn_cast<TagDecl>(FromD)) {
+          auto *ToTD = cast<TagDecl>(ToD);
+          if (!Added &&
+              !FromTD->getLookupParent()->lookup(FromTD->getDeclName()).empty())
+            ToTD->getLookupParent()->makeDeclVisibleInContext(ToTD);
+        }
+      } else {
+        // In minimal import case the decl must be added even if it is not
+        // contained in original context, for LLDB compatibility.
+        // FIXME: Check if a better solution is possible.
+        if (!ToD->getDeclContext()->containsDecl(ToD) &&
+            !FromD->getDescribedTemplate() &&
+            FromD->getFriendObjectKind() == Decl::FOK_None)
+          ToD->getDeclContext()->addDeclInternal(ToD);
+      }
     }
 
   public:
@@ -2584,9 +2604,7 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
     D2 = D2CXX;
     D2->setAccess(D->getAccess());
     D2->setLexicalDeclContext(LexicalDC);
-    addDeclToDCIfVisible(D, D2, DC, LexicalDC);
-    if (D->getFriendObjectKind() == Decl::FOK_Undeclared)
-      D2->getDeclContext()->getPrimaryContext()->makeDeclVisibleInContext(D2);
+    addDeclToContexts(D, D2);
 
     if (ClassTemplateDecl *FromDescribed =
         DCXX->getDescribedClassTemplate()) {
@@ -2652,7 +2670,7 @@ ExpectedDecl ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
                                 Name.getAsIdentifierInfo(), PrevDecl))
       return D2;
     D2->setLexicalDeclContext(LexicalDC);
-    addDeclToDCIfVisible(D, D2, DC, LexicalDC);
+    addDeclToContexts(D, D2);
   }
 
   if (auto BraceRangeOrErr = import(D->getBraceRange()))
@@ -3106,7 +3124,7 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   if (Error Err = ImportTemplateInformation(D, ToFunction))
     return std::move(Err);
 
-  addDeclToDCIfVisible(D, ToFunction, DC, LexicalDC);
+  addDeclToContexts(D, ToFunction);
 
   if (auto *FromCXXMethod = dyn_cast<CXXMethodDecl>(D))
     ImportOverrides(cast<CXXMethodDecl>(ToFunction), FromCXXMethod);
@@ -3596,7 +3614,7 @@ ExpectedDecl ASTNodeImporter::VisitVarDecl(VarDecl *D) {
   if (D->isConstexpr())
     ToVar->setConstexpr(true);
 
-  addDeclToDCIfVisible(D, ToVar, DC, LexicalDC);
+  addDeclToContexts(D, ToVar);
 
   // Import the rest of the chain. I.e. import all subsequent declarations.
   for (++RedeclIt; RedeclIt != Redecls.end(); ++RedeclIt) {
@@ -4913,7 +4931,7 @@ ExpectedDecl ASTNodeImporter::VisitClassTemplateDecl(ClassTemplateDecl *D) {
   D2->setAccess(D->getAccess());
   D2->setLexicalDeclContext(LexicalDC);
 
-  addDeclToDCIfVisible(D, D2, DC, LexicalDC);
+  addDeclToContexts(D, D2);
 
   if (FoundByLookup) {
     auto *Recent =

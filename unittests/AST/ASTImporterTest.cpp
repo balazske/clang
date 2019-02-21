@@ -3419,6 +3419,9 @@ TEST_P(ImportFriendClasses, UndeclaredFriendClassShouldNotBeVisible) {
       FromRecordOfFriend->getDeclContext()->containsDecl(FromRecordOfFriend));
   ASSERT_FALSE(FromRecordOfFriend->getLexicalDeclContext()->containsDecl(
       FromRecordOfFriend));
+  ASSERT_FALSE(FromRecordOfFriend->getLookupParent()
+                   ->lookup(FromRecordOfFriend->getDeclName())
+                   .empty());
 
   auto *ToX = Import(FromX, Lang_CXX);
   ASSERT_TRUE(ToX);
@@ -3434,6 +3437,9 @@ TEST_P(ImportFriendClasses, UndeclaredFriendClassShouldNotBeVisible) {
       ToRecordOfFriend->getDeclContext()->containsDecl(ToRecordOfFriend));
   EXPECT_FALSE(ToRecordOfFriend->getLexicalDeclContext()->containsDecl(
       ToRecordOfFriend));
+  EXPECT_FALSE(ToRecordOfFriend->getLookupParent()
+                   ->lookup(ToRecordOfFriend->getDeclName())
+                   .empty());
 }
 
 TEST_P(ImportFriendClasses, ImportOfRecursiveFriendClassTemplate) {

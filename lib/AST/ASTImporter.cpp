@@ -304,10 +304,9 @@ namespace clang {
         // In minimal import case the decl must be added even if it is not
         // contained in original context, for LLDB compatibility.
         // FIXME: Check if a better solution is possible.
-        if (!ToD->getDeclContext()->containsDecl(ToD) &&
-            !FromD->getDescribedTemplate() &&
+        if (!FromD->getDescribedTemplate() &&
             FromD->getFriendObjectKind() == Decl::FOK_None)
-          ToD->getDeclContext()->addDeclInternal(ToD);
+          ToD->getLexicalDeclContext()->addDeclInternal(ToD);
       }
     }
 

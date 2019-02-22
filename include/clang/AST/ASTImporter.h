@@ -62,7 +62,7 @@ class TypeSourceInfo;
 
     ImportError() : Error(Unknown) { }
     ImportError(const ImportError &Other) : Error(Other.Error) { }
-    ImportError(ErrorKind Error) : Error(Error) { }
+    ImportError(ErrorKind Error) : Error(Error) { /*assert(Error != NameConflict);*/ }
 
     std::string toString() const;
 

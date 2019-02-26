@@ -298,25 +298,27 @@ namespace clang {
       DeclContext *ToDC = ToD->getDeclContext();
       DeclContext *ToLexicalDC = ToD->getLexicalDeclContext();
 
-      if (FromDC->containsDeclAndLoad(FromD))
+      bool Visible = false;
+      if (FromDC->containsDeclAndLoad(FromD)) {
         ToDC->addDeclInternal(ToD);
-      if (ToDC != ToLexicalDC && FromLexicalDC->containsDeclAndLoad(FromD))
+        Visible = true;
+      }
+      if (ToDC != ToLexicalDC && FromLexicalDC->containsDeclAndLoad(FromD)) {
         ToLexicalDC->addDeclInternal(ToD);
+        Visible = true;
+      }
 
-      if (auto *FromNamed = dyn_cast<NamedDecl>(FromD)) {
-        auto *ToNamed = cast<NamedDecl>(ToD);
-        auto MakeVisibleIfNeeded = [FromNamed,
-                                    ToNamed](DeclContext *FromContext,
-                                             DeclContext *ToContext) {
+      // If the Decl was added to any context, it was made already visible.
+      // Otherwise it is still possible that it should be visible.
+      if (!Visible) {
+        if (auto *FromNamed = dyn_cast<NamedDecl>(FromD)) {
+          auto *ToNamed = cast<NamedDecl>(ToD);
           DeclContextLookupResult FromLookup =
-              FromContext->lookup(FromNamed->getDeclName());
+              FromDC->lookup(FromNamed->getDeclName());
           if (std::find(FromLookup.begin(), FromLookup.end(), FromNamed) !=
               FromLookup.end())
-            ToContext->makeDeclVisibleInContext(ToNamed);
-        };
-        MakeVisibleIfNeeded(FromDC, ToDC);
-        if (ToDC != ToLexicalDC)
-          MakeVisibleIfNeeded(FromLexicalDC, ToLexicalDC);
+            ToDC->makeDeclVisibleInContext(ToNamed);
+        }
       }
     }
 

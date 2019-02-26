@@ -305,17 +305,18 @@ namespace clang {
 
       if (auto *FromNamed = dyn_cast<NamedDecl>(FromD)) {
         auto *ToNamed = cast<NamedDecl>(ToD);
-        DeclContextLookupResult FromLookup =
-            FromDC->lookup(FromNamed->getDeclName());
-        if (std::find(FromLookup.begin(), FromLookup.end(), FromD) !=
-            FromLookup.end())
-          ToDC->makeDeclVisibleInContext(ToNamed);
-        if (ToDC != ToLexicalDC) {
-          FromLookup = FromLexicalDC->lookup(FromNamed->getDeclName());
-          if (std::find(FromLookup.begin(), FromLookup.end(), FromD) !=
+        auto MakeVisibleIfNeeded = [FromNamed,
+                                    ToNamed](DeclContext *FromContext,
+                                             DeclContext *ToContext) {
+          DeclContextLookupResult FromLookup =
+              FromContext->lookup(FromNamed->getDeclName());
+          if (std::find(FromLookup.begin(), FromLookup.end(), FromNamed) !=
               FromLookup.end())
-            ToLexicalDC->makeDeclVisibleInContext(ToNamed);
-        }
+            ToContext->makeDeclVisibleInContext(ToNamed);
+        };
+        MakeVisibleIfNeeded(FromDC, ToDC);
+        if (ToDC != ToLexicalDC)
+          MakeVisibleIfNeeded(FromLexicalDC, ToLexicalDC);
       }
     }
 

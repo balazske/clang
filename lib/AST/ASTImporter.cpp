@@ -283,30 +283,39 @@ namespace clang {
     }
 
     void addDeclToContexts(Decl *FromD, Decl *ToD) {
-      if (!Importer.isMinimalImport()) {
-        bool Added = false;
-        if (FromD->getDeclContext()->containsDeclAndLoad(FromD)) {
-          ToD->getDeclContext()->addDeclInternal(ToD);
-          Added = true;
-        }
-        if (ToD->getDeclContext() != ToD->getLexicalDeclContext() &&
-            FromD->getLexicalDeclContext()->containsDeclAndLoad(FromD)) {
-          ToD->getLexicalDeclContext()->addDeclInternal(ToD);
-          Added = true;
-        }
-        if (auto *FromTD = dyn_cast<TagDecl>(FromD)) {
-          auto *ToTD = cast<TagDecl>(ToD);
-          if (!Added &&
-              !FromTD->getLookupParent()->lookup(FromTD->getDeclName()).empty())
-            ToTD->getLookupParent()->makeDeclVisibleInContext(ToTD);
-        }
-      } else {
+      if (Importer.isMinimalImport()) {
         // In minimal import case the decl must be added even if it is not
         // contained in original context, for LLDB compatibility.
         // FIXME: Check if a better solution is possible.
         if (!FromD->getDescribedTemplate() &&
             FromD->getFriendObjectKind() == Decl::FOK_None)
           ToD->getLexicalDeclContext()->addDeclInternal(ToD);
+        return;
+      }
+
+      DeclContext *FromDC = FromD->getDeclContext();
+      DeclContext *FromLexicalDC = FromD->getLexicalDeclContext();
+      DeclContext *ToDC = ToD->getDeclContext();
+      DeclContext *ToLexicalDC = ToD->getLexicalDeclContext();
+
+      if (FromDC->containsDeclAndLoad(FromD))
+        ToDC->addDeclInternal(ToD);
+      if (ToDC != ToLexicalDC && FromLexicalDC->containsDeclAndLoad(FromD))
+        ToLexicalDC->addDeclInternal(ToD);
+
+      if (auto *FromNamed = dyn_cast<NamedDecl>(FromD)) {
+        auto *ToNamed = cast<NamedDecl>(ToD);
+        DeclContextLookupResult FromLookup =
+            FromDC->lookup(FromNamed->getDeclName());
+        if (std::find(FromLookup.begin(), FromLookup.end(), FromD) !=
+            FromLookup.end())
+          ToDC->makeDeclVisibleInContext(ToNamed);
+        if (ToDC != ToLexicalDC) {
+          FromLookup = FromLexicalDC->lookup(FromNamed->getDeclName());
+          if (std::find(FromLookup.begin(), FromLookup.end(), FromD) !=
+              FromLookup.end())
+            ToLexicalDC->makeDeclVisibleInContext(ToNamed);
+        }
       }
     }
 

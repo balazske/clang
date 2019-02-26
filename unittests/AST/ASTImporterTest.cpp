@@ -2264,7 +2264,7 @@ TEST_P(ImportFriendFunctions, Lookup) {
   auto LookupRes = Class->noload_lookup(ToName);
   EXPECT_EQ(LookupRes.size(), 0u);
   LookupRes = ToTU->noload_lookup(ToName);
-  EXPECT_EQ(LookupRes.size(), 0u);
+  EXPECT_EQ(LookupRes.size(), 1u);
 
   EXPECT_EQ(DeclCounter<FunctionDecl>().match(ToTU, FunctionPattern), 1u);
   auto *To0 = FirstDeclMatcher<FunctionDecl>().match(ToTU, FunctionPattern);

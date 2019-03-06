@@ -970,6 +970,7 @@ template <template <typename PP1> class P1> class Templ {
   };
 };
 
+// Instantiate with substitution Arg into P1.
 template class Templ <Arg>;
       )",
       Lang_CXX, classTemplateSpecializationDecl(hasName("Primary")));
@@ -989,6 +990,7 @@ void f() {
 }
       )",
       R"(
+// Arg is different from the other, this should cause non-equivalence.
 template <typename P1> class Arg { int X; };
 template <template <typename PP1> class P1> class Primary { };
 
@@ -999,6 +1001,7 @@ template <template <typename PP1> class P1> class Templ {
   };
 };
 
+// Instantiate with substitution Arg into P1.
 template class Templ <Arg>;
       )",
       Lang_CXX, classTemplateSpecializationDecl(hasName("Primary")));

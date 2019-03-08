@@ -103,10 +103,102 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      const TemplateArgument &Arg1,
                                      const TemplateArgument &Arg2);
 static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     const TemplateArgumentList &ArgL1,
+                                     const TemplateArgumentList &ArgL2);
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                      NestedNameSpecifier *NNS1,
                                      NestedNameSpecifier *NNS2);
 static bool IsStructurallyEquivalent(const IdentifierInfo *Name1,
                                      const IdentifierInfo *Name2);
+static bool IsStructurallyEquivalent(const DeclarationName Name1,
+                                     const DeclarationName Name2);
+
+using ContextVector = llvm::SmallVector<const DeclContext *, 4>;
+
+static void GetContexts(ContextVector &Contexts, const NamedDecl *ND) {
+  const DeclContext *Ctx = ND->getDeclContext();
+
+  // For ObjC methods, look through categories and use the interface as context.
+  if (auto *MD = dyn_cast<ObjCMethodDecl>(ND))
+    if (auto *ID = MD->getClassInterface())
+      Ctx = ID;
+
+  while (Ctx && Ctx->isFunctionOrMethod())
+    Ctx = Ctx->getParent();
+
+  // Collect named contexts.
+  while (Ctx) {
+    if (isa<NamedDecl>(Ctx))
+      Contexts.push_back(Ctx);
+    Ctx = Ctx->getParent();
+  }
+}
+
+static bool IsEquivalentContext(StructuralEquivalenceContext &Context, const ContextVector &Contexts1, const ContextVector &Contexts2) {
+  auto DC2I = Contexts2.begin();
+  for (const DeclContext *DC1 : Contexts1) {
+    if (DC2I == Contexts2.end())
+      return false;
+    const DeclContext *DC2 = *DC2I;
+    ++DC2I;
+
+    if (const auto *Spec1 = dyn_cast<ClassTemplateSpecializationDecl>(DC1)) {
+      const auto *Spec2 = dyn_cast<ClassTemplateSpecializationDecl>(DC2);
+      if (!Spec2)
+        return false;
+      if (!IsStructurallyEquivalent(Spec1->getDeclName(), Spec2->getDeclName()))
+        return false;
+      if (!IsStructurallyEquivalent(Context, Spec1->getTemplateArgs(), Spec2->getTemplateArgs()))
+        return false;
+    } else if (const auto *ND1 = dyn_cast<NamespaceDecl>(DC1)) {
+      const auto *ND2 = dyn_cast<NamespaceDecl>(DC2);
+      if (!ND2)
+        return false;
+      if (ND1->isAnonymousNamespace() != ND2->isAnonymousNamespace())
+        return false;
+      if (ND1->isInline() != ND2->isInline())
+        return false;
+      if (ND1->isAnonymousNamespace() || ND1->isInlineNamespace())
+        continue;
+      if (!IsStructurallyEquivalent(ND1->getDeclName(), ND2->getDeclName()))
+        return false;
+    } else if (const auto *RD1 = dyn_cast<RecordDecl>(DC1)) {
+      const auto *RD2 = dyn_cast<RecordDecl>(DC2);
+      if (!RD2)
+        return false;
+      if (!IsStructurallyEquivalent(RD1->getDeclName(), RD2->getDeclName()))
+        return false;
+    } else if (const auto *FD1 = dyn_cast<FunctionDecl>(DC1)) {
+      const auto *FD2 = dyn_cast<FunctionDecl>(DC2);
+      if (!FD2)
+        return false;
+      if (!IsStructurallyEquivalent(Context, const_cast<FunctionDecl *>(FD1), const_cast<FunctionDecl *>(FD2)))
+        return false;
+    /*} else if (const auto *ED = dyn_cast<EnumDecl>(DC)) {
+      // C++ [dcl.enum]p10: Each enum-name and each unscoped
+      // enumerator is declared in the scope that immediately contains
+      // the enum-specifier. Each scoped enumerator is declared in the
+      // scope of the enumeration.
+      // For the case of unscoped enumerator, do not include in the qualified
+      // name any information about its enum enclosing scope, as its visibility
+      // is global.
+      if (ED->isScoped())
+        OS << *ED;
+      else
+        continue;*/
+    } else if (const auto *ND1 = dyn_cast<NamedDecl>(DC1)) {
+      const auto *ND2 = cast<NamedDecl>(DC2);
+      if (!IsStructurallyEquivalent(ND1->getDeclName(), ND2->getDeclName()))
+        return false;
+    } else
+      llvm_unreachable("Context should be NamedDecl.");
+  }
+
+  if (DC2I != Contexts2.end())
+    return false;
+
+  return true;
+}
 
 static bool IsStructurallyEquivalent(const DeclarationName Name1,
                                      const DeclarationName Name2) {
@@ -336,6 +428,23 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   }
 
   llvm_unreachable("Invalid template argument kind");
+}
+
+/// Determine whether two template argument lists are equivalent.
+static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
+                                     const TemplateArgumentList &ArgL1,
+                                     const TemplateArgumentList &ArgL2) {
+  if (ArgL1.size() != ArgL2.size()) {
+    if (Context.Complain) {
+    }
+    return false;
+  }
+
+  for (unsigned I = 0, N = ArgL1.size(); I != N; ++I)
+    if (!IsStructurallyEquivalent(Context, ArgL1.get(I), ArgL2.get(I)))
+      return false;
+
+  return true;
 }
 
 /// Determine structural equivalence for the common part of array
@@ -1633,6 +1742,8 @@ unsigned StructuralEquivalenceContext::getApplicableDiagnostic(
     return diag::warn_odr_parameter_pack_non_pack;
   case diag::err_odr_non_type_parameter_type_inconsistent:
     return diag::warn_odr_non_type_parameter_type_inconsistent;
+  default:
+    llvm_unreachable("Unknown diagnostic type.");
   }
 }
 
@@ -1673,6 +1784,17 @@ bool StructuralEquivalenceContext::CheckCommonEquivalence(Decl *D1, Decl *D2) {
     return false;
 
   // FIXME: Move check for identifier names into this function.
+
+  if (auto *ND1 = dyn_cast<NamedDecl>(D1)) {
+    auto *ND2 = dyn_cast<NamedDecl>(D2);
+    if (!ND2)
+      return false;
+    ContextVector Contexts1, Contexts2;
+    GetContexts(Contexts1, ND1);
+    GetContexts(Contexts2, ND2);
+    if (!IsEquivalentContext(*this, Contexts1, Contexts2))
+      return false;
+  }
 
   return true;
 }

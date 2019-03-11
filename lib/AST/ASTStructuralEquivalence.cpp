@@ -115,7 +115,8 @@ static bool IsStructurallyEquivalent(const DeclarationName Name1,
 
 using ContextVector = llvm::SmallVector<const DeclContext *, 4>;
 
-static void GetContexts(ContextVector &Contexts, const NamedDecl *ND) {
+static void GetContextsForEquivalenceCheck(ContextVector &Contexts,
+                                           const NamedDecl *ND) {
   const DeclContext *Ctx = ND->getDeclContext();
 
   // For ObjC methods, look through categories and use the interface as context.
@@ -123,18 +124,73 @@ static void GetContexts(ContextVector &Contexts, const NamedDecl *ND) {
     if (auto *ID = MD->getClassInterface())
       Ctx = ID;
 
-  while (Ctx && Ctx->isFunctionOrMethod())
-    Ctx = Ctx->getParent();
-
   // Collect named contexts.
+  // Function contexts are ignored, this behavior is enough for ASTImporter.
+  // FIXME: Add assertion if different (non equivalent) functions are
+  // encountered on the paths (except the first)?
   while (Ctx) {
-    if (isa<NamedDecl>(Ctx))
+    if (isa<NamedDecl>(Ctx) && !isa<FunctionDecl>(Ctx))
       Contexts.push_back(Ctx);
     Ctx = Ctx->getParent();
   }
 }
 
-static bool IsEquivalentContext(StructuralEquivalenceContext &Context, const ContextVector &Contexts1, const ContextVector &Contexts2) {
+static bool IsEquivalentDeclContext(StructuralEquivalenceContext &Context,
+                                    const DeclContext *DC1,
+                                    const DeclContext *DC2) {
+  if (const auto *Spec1 = dyn_cast<ClassTemplateSpecializationDecl>(DC1)) {
+    const auto *Spec2 = dyn_cast<ClassTemplateSpecializationDecl>(DC2);
+    if (!Spec2)
+      return false;
+    if (!IsStructurallyEquivalent(Spec1->getDeclName(), Spec2->getDeclName()))
+      return false;
+    if (!IsStructurallyEquivalent(Context, Spec1->getTemplateArgs(),
+                                  Spec2->getTemplateArgs()))
+      return false;
+  } else if (const auto *ND1 = dyn_cast<NamespaceDecl>(DC1)) {
+    const auto *ND2 = dyn_cast<NamespaceDecl>(DC2);
+    if (!ND2)
+      return false;
+    if (ND1->isAnonymousNamespace() != ND2->isAnonymousNamespace())
+      return false;
+    if (ND1->isInline() != ND2->isInline())
+      return false;
+    if (ND1->isAnonymousNamespace() || ND1->isInlineNamespace())
+      return true;
+    if (!IsStructurallyEquivalent(ND1->getDeclName(), ND2->getDeclName()))
+      return false;
+  } else if (const auto *RD1 = dyn_cast<RecordDecl>(DC1)) {
+    const auto *RD2 = dyn_cast<RecordDecl>(DC2);
+    if (!RD2)
+      return false;
+    if (!IsStructurallyEquivalent(RD1->getDeclName(), RD2->getDeclName()))
+      return false;
+  } else if (const auto *ED1 = dyn_cast<EnumDecl>(DC1)) {
+    const auto *ED2 = dyn_cast<EnumDecl>(DC2);
+    if (!ED2)
+      return false;
+    if (ED1->isScoped() != ED2->isScoped())
+      return false;
+  } else if (const auto *ND1 = dyn_cast<NamedDecl>(DC1)) {
+    const auto *ND2 = cast<NamedDecl>(DC2);
+    if (!IsStructurallyEquivalent(ND1->getDeclName(), ND2->getDeclName()))
+      return false;
+  } else
+    llvm_unreachable("Context should be NamedDecl.");
+
+  return true;
+}
+
+/// This function checks for equivalent "context" (scope) of an entity.
+/// This should check if the scope of two names is equivalent.
+/// Functions are excluded from this scope check because there is no use case
+/// when entities from different functions are compared.
+static bool IsEquivalentContext(StructuralEquivalenceContext &Context,
+                                const NamedDecl *ND1, const NamedDecl *ND2) {
+  ContextVector Contexts1, Contexts2;
+  GetContextsForEquivalenceCheck(Contexts1, ND1);
+  GetContextsForEquivalenceCheck(Contexts2, ND2);
+
   auto DC2I = Contexts2.begin();
   for (const DeclContext *DC1 : Contexts1) {
     if (DC2I == Contexts2.end())
@@ -142,56 +198,8 @@ static bool IsEquivalentContext(StructuralEquivalenceContext &Context, const Con
     const DeclContext *DC2 = *DC2I;
     ++DC2I;
 
-    if (const auto *Spec1 = dyn_cast<ClassTemplateSpecializationDecl>(DC1)) {
-      const auto *Spec2 = dyn_cast<ClassTemplateSpecializationDecl>(DC2);
-      if (!Spec2)
-        return false;
-      if (!IsStructurallyEquivalent(Spec1->getDeclName(), Spec2->getDeclName()))
-        return false;
-      if (!IsStructurallyEquivalent(Context, Spec1->getTemplateArgs(), Spec2->getTemplateArgs()))
-        return false;
-    } else if (const auto *ND1 = dyn_cast<NamespaceDecl>(DC1)) {
-      const auto *ND2 = dyn_cast<NamespaceDecl>(DC2);
-      if (!ND2)
-        return false;
-      if (ND1->isAnonymousNamespace() != ND2->isAnonymousNamespace())
-        return false;
-      if (ND1->isInline() != ND2->isInline())
-        return false;
-      if (ND1->isAnonymousNamespace() || ND1->isInlineNamespace())
-        continue;
-      if (!IsStructurallyEquivalent(ND1->getDeclName(), ND2->getDeclName()))
-        return false;
-    } else if (const auto *RD1 = dyn_cast<RecordDecl>(DC1)) {
-      const auto *RD2 = dyn_cast<RecordDecl>(DC2);
-      if (!RD2)
-        return false;
-      if (!IsStructurallyEquivalent(RD1->getDeclName(), RD2->getDeclName()))
-        return false;
-    } else if (const auto *FD1 = dyn_cast<FunctionDecl>(DC1)) {
-      const auto *FD2 = dyn_cast<FunctionDecl>(DC2);
-      if (!FD2)
-        return false;
-      if (!IsStructurallyEquivalent(Context, const_cast<FunctionDecl *>(FD1), const_cast<FunctionDecl *>(FD2)))
-        return false;
-    /*} else if (const auto *ED = dyn_cast<EnumDecl>(DC)) {
-      // C++ [dcl.enum]p10: Each enum-name and each unscoped
-      // enumerator is declared in the scope that immediately contains
-      // the enum-specifier. Each scoped enumerator is declared in the
-      // scope of the enumeration.
-      // For the case of unscoped enumerator, do not include in the qualified
-      // name any information about its enum enclosing scope, as its visibility
-      // is global.
-      if (ED->isScoped())
-        OS << *ED;
-      else
-        continue;*/
-    } else if (const auto *ND1 = dyn_cast<NamedDecl>(DC1)) {
-      const auto *ND2 = cast<NamedDecl>(DC2);
-      if (!IsStructurallyEquivalent(ND1->getDeclName(), ND2->getDeclName()))
-        return false;
-    } else
-      llvm_unreachable("Context should be NamedDecl.");
+    if (!IsEquivalentDeclContext(Context, DC1, DC2))
+      return false;
   }
 
   if (DC2I != Contexts2.end())
@@ -1789,10 +1797,7 @@ bool StructuralEquivalenceContext::CheckCommonEquivalence(Decl *D1, Decl *D2) {
     auto *ND2 = dyn_cast<NamedDecl>(D2);
     if (!ND2)
       return false;
-    ContextVector Contexts1, Contexts2;
-    GetContexts(Contexts1, ND1);
-    GetContexts(Contexts2, ND2);
-    if (!IsEquivalentContext(*this, Contexts1, Contexts2))
+    if (!IsEquivalentContext(*this, ND1, ND2))
       return false;
   }
 

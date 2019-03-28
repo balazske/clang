@@ -4620,6 +4620,30 @@ TEST_P(ASTImporterOptionSpecificTestBase,
   EXPECT_EQ(ToFwdE->getCanonicalDecl(), ToDefE->getCanonicalDecl());
 }
 
+// FIXME: Source location import check fails here
+// That check is not applicable for this case.
+TEST_P(ASTImporterOptionSpecificTestBase, DISABLED_AnonymousNamespaceIsMerged) {
+  Decl *FromTU = getTuDecl(
+      R"(
+      namespace {}
+      namespace {}
+      )",
+      Lang_CXX);
+  auto *FromNS0 =
+      FirstDeclMatcher<NamespaceDecl>().match(FromTU, namespaceDecl());
+  auto *FromNS1 =
+      LastDeclMatcher<NamespaceDecl>().match(FromTU, namespaceDecl());
+  ASSERT_NE(FromNS0, FromNS1);
+
+  auto *ToNS0Imported = Import(FromNS0, Lang_CXX);
+  auto *ToNS1Imported = Import(FromNS1, Lang_CXX);
+
+  ASSERT_EQ(ToNS0Imported, ToNS1Imported);
+  EXPECT_EQ(1u, DeclCounter<NamespaceDecl>().match(
+                    ToNS0Imported->getTranslationUnitDecl(),
+                    namespaceDecl(isAnonymous())));
+}
+
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterLookupTableTest,
                         DefaultTestValuesForRunOptions, );
 

@@ -70,7 +70,11 @@ struct VariableTemplate {
   using DeclTy = VarTemplateDecl;
   static constexpr auto *Prototype = "template <class T> extern T X;";
   static constexpr auto *Definition =
-      "template <class T> T X; template<> int X<int>;";
+      R"(
+      template <class T> T X;
+      template <> int X<int>;
+      )";
+  // There is no matcher for varTemplateDecl so use a work-around.
   BindableMatcher<Decl> getPattern() {
     return namedDecl(hasName("X"), unless(isImplicit()),
                      has(templateTypeParmDecl()));

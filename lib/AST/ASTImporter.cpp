@@ -972,6 +972,23 @@ bool ASTNodeImporter::hasSameVisibilityContext(T *Found, T *From) {
 }
 
 template <>
+bool ASTNodeImporter::hasSameVisibilityContext(VarTemplateDecl *Found, VarTemplateDecl *From) {
+  // FIXME: At VarTemplateDecl the linkage is set only at the templated decl.
+  bool FoundExternal = Found->getTemplatedDecl()->hasExternalFormalLinkage();
+  bool FromExternal = From->getTemplatedDecl()->hasExternalFormalLinkage();
+  if (FromExternal)
+    return FoundExternal;
+  else if (Importer.GetFromTU(Found) == From->getTranslationUnitDecl()) {
+    if (From->isInAnonymousNamespace())
+      return Found->isInAnonymousNamespace();
+    else
+      return !Found->isInAnonymousNamespace() &&
+             !FoundExternal;
+  }
+  return false;
+}
+
+template <>
 bool ASTNodeImporter::hasSameVisibilityContext(TypedefNameDecl *Found,
                                                TypedefNameDecl *From) {
   if (From->isInAnonymousNamespace() && Found->isInAnonymousNamespace())
@@ -5249,6 +5266,8 @@ ExpectedDecl ASTNodeImporter::VisitVarTemplateDecl(VarTemplateDecl *D) {
       continue;
 
     if (VarTemplateDecl *FoundTemplate = dyn_cast<VarTemplateDecl>(FoundDecl)) {
+      if (!hasSameVisibilityContext(FoundTemplate, D))
+        continue;
       if (isStructuralMatch(D, FoundTemplate)) {
         // The Decl in the "From" context has a definition, but in the
         // "To" context we already have a definition.

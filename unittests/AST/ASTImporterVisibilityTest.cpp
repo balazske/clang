@@ -40,7 +40,9 @@ struct GetVarPattern {
 };
 struct GetVarTemplPattern {
   using DeclTy = VarTemplateDecl;
-  BindableMatcher<Decl> operator()() { return namedDecl(hasName("v"), has(templateTypeParmDecl())); }
+  BindableMatcher<Decl> operator()() {
+    return namedDecl(hasName("v"), has(templateTypeParmDecl()));
+  }
 };
 struct GetClassPattern {
   using DeclTy = CXXRecordDecl;
@@ -141,7 +143,8 @@ using ImportFunctionsVisibilityChain = ImportVisibilityChain<GetFunPattern>;
 using ImportFunctionTemplatesVisibilityChain =
     ImportVisibilityChain<GetFunTemplPattern>;
 using ImportVariablesVisibilityChain = ImportVisibilityChain<GetVarPattern>;
-using ImportVariableTemplatesVisibilityChain = ImportVisibilityChain<GetVarTemplPattern>;
+using ImportVariableTemplatesVisibilityChain =
+    ImportVisibilityChain<GetVarTemplPattern>;
 using ImportClassesVisibilityChain = ImportVisibilityChain<GetClassPattern>;
 using ImportClassTemplatesVisibilityChain =
     ImportVisibilityChain<GetClassTemplPattern>;
@@ -198,16 +201,15 @@ INSTANTIATE_TEST_CASE_P(
         // provided but they must have the same linkage.  See also the test
         // ImportVariableChainInC which test for this special C Lang case.
         ::testing::Values(ExternV, AnonV)), );
-INSTANTIATE_TEST_CASE_P(
-    ParameterizedTests, ImportVariableTemplatesVisibilityChain,
-    ::testing::Combine(
-        DefaultTestValuesForRunOptions,
-        ::testing::Values(ExternVT, AnonVT)), );
-INSTANTIATE_TEST_CASE_P(
-    ParameterizedTests, ImportClassesVisibilityChain,
-    ::testing::Combine(
-        DefaultTestValuesForRunOptions,
-        ::testing::Values(ExternC, AnonC)), );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests,
+                        ImportVariableTemplatesVisibilityChain,
+                        ::testing::Combine(DefaultTestValuesForRunOptions,
+                                           ::testing::Values(ExternVT,
+                                                             AnonVT)), );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportClassesVisibilityChain,
+                        ::testing::Combine(DefaultTestValuesForRunOptions,
+                                           ::testing::Values(ExternC,
+                                                             AnonC)), );
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ImportClassTemplatesVisibilityChain,
                         ::testing::Combine(DefaultTestValuesForRunOptions,
                                            ::testing::Values(ExternCT,

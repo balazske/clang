@@ -972,7 +972,8 @@ bool ASTNodeImporter::hasSameVisibilityContext(T *Found, T *From) {
 }
 
 template <>
-bool ASTNodeImporter::hasSameVisibilityContext(VarTemplateDecl *Found, VarTemplateDecl *From) {
+bool ASTNodeImporter::hasSameVisibilityContext(VarTemplateDecl *Found,
+                                               VarTemplateDecl *From) {
   // FIXME: At VarTemplateDecl the linkage is set only at the templated decl.
   bool FoundExternal = Found->getTemplatedDecl()->hasExternalFormalLinkage();
   bool FromExternal = From->getTemplatedDecl()->hasExternalFormalLinkage();
@@ -982,8 +983,7 @@ bool ASTNodeImporter::hasSameVisibilityContext(VarTemplateDecl *Found, VarTempla
     if (From->isInAnonymousNamespace())
       return Found->isInAnonymousNamespace();
     else
-      return !Found->isInAnonymousNamespace() &&
-             !FoundExternal;
+      return !Found->isInAnonymousNamespace() && !FoundExternal;
   }
   return false;
 }

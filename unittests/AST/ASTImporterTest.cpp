@@ -4741,6 +4741,31 @@ TEST_P(ASTImporterOptionSpecificTestBase,
   ASSERT_NE(ToL0, ToL1);
 }
 
+TEST_P(ASTImporterOptionSpecificTestBase, ImportTypeOfAlignmentAttr) {
+  // FIXME: These packed and aligned attributes could trigger an error situation
+  // where source location from 'From' context is referenced in 'To' context
+  // through evaluation of the alignof attribute.
+  // This happened if the 'alignof(A)' expression was not imported correctly.
+  Decl *FromTU = getTuDecl(
+      R"(
+      struct __attribute__((packed)) A { int __attribute__((aligned(8))) X; };
+      struct alignas(alignof(A)) S {};
+      )",
+      Lang_CXX11, "input.cc");
+  auto *FromD = FirstDeclMatcher<CXXRecordDecl>().match(
+      FromTU, cxxRecordDecl(hasName("S"), unless(isImplicit())));
+  ASSERT_TRUE(FromD);
+
+  auto *ToD = Import(FromD, Lang_CXX11);
+  ASSERT_TRUE(ToD);
+  auto *ToA = FirstDeclMatcher<CXXRecordDecl>().match(
+      ToD->getTranslationUnitDecl(),
+      cxxRecordDecl(hasName("A"), unless(isImplicit())));
+  // Ensure that 'struct A' was imported (through reference from attribute of
+  // 'S').
+  EXPECT_TRUE(ToA);
+}
+
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterLookupTableTest,
                         DefaultTestValuesForRunOptions, );
 

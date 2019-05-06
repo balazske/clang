@@ -4741,7 +4741,7 @@ TEST_P(ASTImporterOptionSpecificTestBase,
   ASSERT_NE(ToL0, ToL1);
 }
 
-TEST_P(ASTImporterOptionSpecificTestBase, ImportTypeOfAlignmentAttr) {
+TEST_P(ASTImporterOptionSpecificTestBase, ImportExprOfAlignmentAttr) {
   // FIXME: These packed and aligned attributes could trigger an error situation
   // where source location from 'From' context is referenced in 'To' context
   // through evaluation of the alignof attribute.
@@ -4758,6 +4758,14 @@ TEST_P(ASTImporterOptionSpecificTestBase, ImportTypeOfAlignmentAttr) {
 
   auto *ToD = Import(FromD, Lang_CXX11);
   ASSERT_TRUE(ToD);
+
+  auto *FromAttr = FromD->getAttr<AlignedAttr>();
+  auto *ToAttr = ToD->getAttr<AlignedAttr>();
+  EXPECT_EQ(FromAttr->isInherited(), ToAttr->isInherited());
+  EXPECT_EQ(FromAttr->isPackExpansion(), ToAttr->isPackExpansion());
+  EXPECT_EQ(FromAttr->isImplicit(), ToAttr->isImplicit());
+  EXPECT_TRUE(ToAttr->getAlignmentExpr());
+
   auto *ToA = FirstDeclMatcher<CXXRecordDecl>().match(
       ToD->getTranslationUnitDecl(),
       cxxRecordDecl(hasName("A"), unless(isImplicit())));

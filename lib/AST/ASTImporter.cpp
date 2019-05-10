@@ -1680,7 +1680,8 @@ Error ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) 
     return ToDCOrErr.takeError();
   }
 
-  llvm::SmallVector<Decl *, 8> ImportedDecls;
+  llvm::SmallVector<Decl *, 8> ImportedDeclsOriginalOrder;
+  llvm::DenseSet<Decl *> ImportedDecls;
   for (auto *From : FromDC->decls()) {
     ExpectedDecl ImportedOrErr = import(From);
     if (!ImportedOrErr) {
@@ -1696,9 +1697,13 @@ Error ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) 
       if (isa<TagDecl>(FromDC))
         return ImportedOrErr.takeError();
       consumeError(ImportedOrErr.takeError());
+    } else {
+      Decl *To = *ImportedOrErr;
+      assert(To && "FromDC->decls contained a nullptr?");
+      auto InsertResult = ImportedDecls.insert(To);
+      if (InsertResult.second)
+        ImportedDeclsOriginalOrder.push_back(To);
     }
-    else
-      ImportedDecls.push_back(*ImportedOrErr);
   }
 
   // Reorder declarations in RecordDecls because they may have another
@@ -1714,8 +1719,8 @@ Error ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) 
   llvm::SmallDenseSet<Decl *, 2> MissingDecls;
   // Frist, remove all declarations, which may be in wrong order in the
   // lexical DeclContext.
-  for (Decl *ToD : ImportedDecls) { // O(n)
-    if (ToD && ToD->getLexicalDeclContext() == ToDC) {
+  for (Decl *ToD : ImportedDeclsOriginalOrder) { // O(n)
+    if (ToD->getLexicalDeclContext() == ToDC) {
       if (ToDC->containsDecl(ToD)) { // containsDecl is O(1)
         ToDC->removeDecl(ToD);       // O(n)
       } else {
@@ -1734,8 +1739,8 @@ Error ASTNodeImporter::ImportDeclContext(DeclContext *FromDC, bool ForceImport) 
     }
   }
   // Add the declarations, but this time in the correct order.
-  for (Decl *ToD : ImportedDecls) {
-    if (ToD && ToD->getLexicalDeclContext() == ToDC) {
+  for (Decl *ToD : ImportedDeclsOriginalOrder) {
+    if (ToD->getLexicalDeclContext() == ToDC) {
       // FIXME remove this if, when all Decls are properly imported
       if (MissingDecls.count(ToD) == 0) {
         ToDC->addDeclInternal(ToD);

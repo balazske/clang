@@ -1799,12 +1799,6 @@ static Error setTypedefNameForAnonDecl(TagDecl *From, TagDecl *To,
   return Error::success();
 }
 
-struct DefinitionCompleter {
-  RecordDecl *To;
-  DefinitionCompleter(RecordDecl *To) : To(To) { To->startDefinition(); }
-  ~DefinitionCompleter() { To->completeDefinition(); }
-};
-
 Error ASTNodeImporter::ImportDefinition(
     RecordDecl *From, RecordDecl *To, ImportDefinitionKind Kind) {
   if (To->getDefinition() || To->isBeingDefined()) {
@@ -1827,6 +1821,11 @@ Error ASTNodeImporter::ImportDefinition(
   // Complete the definition even if error is returned.
   // The RecordDecl may be already part of the AST so it is better to
   // have it in complete state even if something is wrong with it.
+  struct DefinitionCompleter {
+    RecordDecl *To;
+    DefinitionCompleter(RecordDecl *To) : To(To) { To->startDefinition(); }
+    ~DefinitionCompleter() { To->completeDefinition(); }
+  };
   DefinitionCompleter CompleterRAII(To);
 
   if (Error Err = setTypedefNameForAnonDecl(From, To, Importer))

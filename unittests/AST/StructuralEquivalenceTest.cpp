@@ -1087,6 +1087,24 @@ template class Templ <Arg>;
   EXPECT_FALSE(testStructuralMatch(t));
 }
 
+TEST_F(StructuralEquivalenceTemplateTest, DependentExprInTemplateArg) {
+  auto t = makeDecls<FriendDecl>(
+      R"(
+      template <bool B1, bool B2>
+      struct X {
+        friend X<!B1, B2>;
+      };
+      )",
+      R"(
+      template <bool B1, bool B2>
+      struct X {
+        friend X<B1, !B2>;
+      };
+      )",
+      Lang_CXX11, friendDecl());
+  EXPECT_FALSE(testStructuralMatch(t));
+}
+
 struct StructuralEquivalenceDependentTemplateArgsTest
     : StructuralEquivalenceTemplateTest {};
 

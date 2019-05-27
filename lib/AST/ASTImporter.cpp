@@ -5660,15 +5660,36 @@ ASTNodeImporter::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
         // name conflict), because FunctionTemplates can possibly overload.
       } // template
     }   // for
-  }
 
-  auto ParamsOrErr = import(D->getTemplateParameters());
-  if (!ParamsOrErr)
-    return ParamsOrErr.takeError();
+#if 0
+    // alternative solution
+    if (FoundByLookup) {
+      if (dyn_cast<CXXMethodDecl>(FoundByLookup->getTemplatedDecl())) {
+        if (D->getLexicalDeclContext() == D->getDeclContext()) {
+          if (!D->getTemplatedDecl()->doesThisDeclarationHaveABody()) {
+            return Importer.MapImported(D, const_cast<FunctionTemplateDecl *>(FoundByLookup));
+          } else {
+            // Let's continue and build up the redecl chain in this case.
+            // FIXME Merge the functions into one decl.
+          }
+        }
+      }
+    }
+#endif
+  }
 
   FunctionDecl *TemplatedFD;
   if (Error Err = importInto(TemplatedFD, D->getTemplatedDecl()))
     return std::move(Err);
+
+  // The templated decl may have already the template decl (the import returned
+  // an existing object).
+  if (TemplatedFD->getDescribedFunctionTemplate())
+    return Importer.MapImported(D, TemplatedFD->getDescribedFunctionTemplate());
+
+  auto ParamsOrErr = import(D->getTemplateParameters());
+  if (!ParamsOrErr)
+    return ParamsOrErr.takeError();
 
   FunctionTemplateDecl *ToFunc;
   if (GetImportedOrCreateDecl(ToFunc, D, Importer.getToContext(), DC, Loc, Name,

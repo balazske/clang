@@ -5130,23 +5130,6 @@ TEST_P(ASTImporterOptionSpecificTestBase, ImportOfFriendTemplateWithArgExpr) {
   EXPECT_NE(ToD1->getCanonicalDecl(), ToD2->getCanonicalDecl());
 }
 
-TEST_P(ASTImporterOptionSpecificTestBase, DISABLED_SourceLocationDifferentTU) {
-  TranslationUnitDecl *ToTU = getToTuDecl("void f1();", Lang_CXX11);
-  Decl *FromTU = getTuDecl("void f2();", Lang_CXX11, "input.cc");
-  auto *ToF1 = FirstDeclMatcher<FunctionDecl>().match(ToTU, functionDecl());
-  auto *FromF2 = FirstDeclMatcher<FunctionDecl>().match(FromTU, functionDecl());
-
-  auto *ToF2 = Import(FromF2, Lang_CXX11);
-
-  bool Before1 =
-      ToTU->getASTContext().getSourceManager().isBeforeInTranslationUnit(
-          ToF1->getLocation(), ToF2->getLocation());
-  bool Before2 =
-      ToTU->getASTContext().getSourceManager().isBeforeInTranslationUnit(
-          ToF2->getLocation(), ToF1->getLocation());
-  EXPECT_NE(Before1, Before2);
-}
-
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, ASTImporterLookupTableTest,
                         DefaultTestValuesForRunOptions, );
 

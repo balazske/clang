@@ -160,6 +160,16 @@ public:
   /// Emit diagnostics for the user for potential configuration errors.
   void emitCrossTUDiagnostics(const IndexError &IE);
 
+  /// Determine the original source location in the original TU for an
+  /// imported source location.
+  /// \p ToLoc Source location in the imported-to AST.
+  /// \p FromLoc Returned source location in the imported-from AST.
+  /// \return The ASTUnit for the source file of FromLoc. If the ToLoc is not an
+  /// imported location or other error occurs, nullptr is returned.
+  clang::ASTUnit *
+  GetImportedFromSourceLocation(const clang::SourceLocation &ToLoc,
+                                clang::SourceLocation &FromLoc) const;
+
 private:
   void lazyInitImporterSharedSt(TranslationUnitDecl *ToTU);
   ASTImporter &getOrCreateASTImporter(ASTContext &From);
@@ -168,6 +178,7 @@ private:
 
   llvm::StringMap<std::unique_ptr<clang::ASTUnit>> FileASTUnitMap;
   llvm::StringMap<clang::ASTUnit *> FunctionASTUnitMap;
+  llvm::StringMap<clang::ASTUnit *> SrcFileASTUnitMap;
   llvm::StringMap<std::string> FunctionFileMap;
   llvm::DenseMap<TranslationUnitDecl *, std::unique_ptr<ASTImporter>>
       ASTUnitImporterMap;

@@ -166,6 +166,10 @@ class TypeSourceInfo;
     /// manager to the corresponding FileIDs in the "to" source manager.
     llvm::DenseMap<FileID, FileID> ImportedFileIDs;
 
+    /// Mapping from the already-imported FileIDs in the "to" source
+    /// manager to the corresponding FileIDs in the "from" source manager.
+    llvm::DenseMap<FileID, FileID> ImportedFromFileIDs;
+
     /// Mapping from the already-imported CXXBasesSpecifier in
     ///  the "from" source manager to the corresponding CXXBasesSpecifier
     ///  in the "to" source manager.
@@ -308,6 +312,10 @@ class TypeSourceInfo;
     /// \returns The equivalent source location in the "to" context, or the
     /// import error.
     llvm::Expected<SourceLocation> Import(SourceLocation FromLoc);
+
+    /// Determine the original FileID (in the "from" source manager) for an
+    /// imported FileID (in the "to" source manager).
+    llvm::Optional<FileID> GetFromFileID(FileID ToID) const;
 
     /// Import the given source range from the "from" context into
     /// the "to" context.

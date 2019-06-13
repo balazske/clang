@@ -8872,7 +8872,16 @@ Expected<FileID> ASTImporter::Import(FileID FromID, bool IsBuiltin) {
   assert(ToID.isValid() && "Unexpected invalid fileID was created.");
 
   ImportedFileIDs[FromID] = ToID;
+  ImportedFromFileIDs[ToID] = FromID;
   return ToID;
+}
+
+llvm::Optional<FileID> ASTImporter::GetFromFileID(FileID ToID) const {
+  llvm::DenseMap<FileID, FileID>::const_iterator Pos =
+      ImportedFromFileIDs.find(ToID);
+  if (Pos != ImportedFromFileIDs.end())
+    return Pos->second;
+  return {};
 }
 
 Expected<CXXCtorInitializer *> ASTImporter::Import(CXXCtorInitializer *From) {

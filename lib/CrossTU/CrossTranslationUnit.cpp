@@ -349,6 +349,7 @@ llvm::Expected<ASTUnit *> CrossTranslationUnitContext::loadExternalAST(
           ASTUnit::LoadEverything, Diags, CI.getFileSystemOpts()));
       Unit = LoadedUnit.get();
       FileASTUnitMap[ASTFileName] = std::move(LoadedUnit);
+      SrcFileASTUnitMap[Unit->getOriginalSourceFileName()] = Unit;
       ++NumASTLoaded;
       if (DisplayCTUProgress) {
         llvm::errs() << "CTU loaded AST file: "
@@ -414,6 +415,34 @@ CrossTranslationUnitContext::getOrCreateASTImporter(ASTContext &From) {
       From.getSourceManager().getFileManager(), false, ImporterSharedSt);
   ASTUnitImporterMap[From.getTranslationUnitDecl()].reset(NewImporter);
   return *NewImporter;
+}
+
+clang::ASTUnit *CrossTranslationUnitContext::GetImportedFromSourceLocation(
+    const clang::SourceLocation &ToLoc, clang::SourceLocation &FromLoc) const {
+  const SourceManager &SM = Context.getSourceManager();
+  auto DecExpToLoc = SM.getDecomposedExpansionLoc(ToLoc);
+  const FileEntry *Entry = SM.getFileEntryForID(DecExpToLoc.first);
+  if (!Entry)
+    return nullptr;
+
+  auto U = SrcFileASTUnitMap.find(Entry->getName());
+  if (U == SrcFileASTUnitMap.end())
+    return nullptr;
+  clang::ASTUnit *Unit = U->second;
+
+  auto I =
+      ASTUnitImporterMap.find(Unit->getASTContext().getTranslationUnitDecl());
+  if (I == ASTUnitImporterMap.end())
+    return nullptr;
+  ASTImporter *Importer = I->second.get();
+
+  auto DecToLoc = SM.getDecomposedLoc(ToLoc);
+  llvm::Optional<FileID> FromID = Importer->GetFromFileID(DecToLoc.first);
+  if (!FromID)
+    return nullptr;
+  FromLoc = Unit->getSourceManager().getComposedLoc(*FromID, DecToLoc.second);
+
+  return Unit;
 }
 
 } // namespace cross_tu

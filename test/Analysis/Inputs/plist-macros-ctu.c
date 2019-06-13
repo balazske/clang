@@ -11,3 +11,9 @@ void F1(int **X) {
 void F2(int **Y) {
   M;
 }
+
+#define M1 *Z = (int *)0
+
+void F3(int **Z) {
+  M1;
+}

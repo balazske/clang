@@ -16,6 +16,16 @@
 
 extern void F1(int **);
 extern void F2(int **);
+extern void F3(int **);
+
+void test0() {
+  int *X;
+  F3(&X);
+  *X = 1; // expected-warning{{Dereference of null pointer}}
+}
+// CHECK: <key>name</key><string>M1</string>
+// CHECK-NEXT: <key>expansion</key><string>*Z = (int *)0</string>
+
 
 void test1() {
   int *X;

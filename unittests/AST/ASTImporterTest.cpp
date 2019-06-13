@@ -2469,11 +2469,11 @@ TEST_P(ImportFunctionTemplates,
 TEST_P(ImportFunctionTemplates, ImportFunctionTemplateInRecordDeclTwice) {
   auto Code =
       R"(
-  class X {
-    template <class T>
-    void f(T t);
-  };
-  )";
+      class X {
+        template <class T>
+        void f(T t);
+      };
+      )";
   Decl *FromTU1 = getTuDecl(Code, Lang_CXX, "input1.cc");
   auto *FromD1 = FirstDeclMatcher<FunctionTemplateDecl>().match(
       FromTU1, functionTemplateDecl(hasName("f")));
@@ -2489,13 +2489,13 @@ TEST_P(ImportFunctionTemplates,
        ImportFunctionTemplateWithDefInRecordDeclTwice) {
   auto Code =
       R"(
-  class X {
-    template <class T>
-    void f(T t);
-  };
-  template <class T>
-  void X::f(T t) {};
-  )";
+      class X {
+        template <class T>
+        void f(T t);
+      };
+      template <class T>
+      void X::f(T t) {};
+      )";
   Decl *FromTU1 = getTuDecl(Code, Lang_CXX, "input1.cc");
   auto *FromD1 = FirstDeclMatcher<FunctionTemplateDecl>().match(
       FromTU1, functionTemplateDecl(hasName("f")));

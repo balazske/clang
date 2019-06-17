@@ -349,7 +349,12 @@ llvm::Expected<ASTUnit *> CrossTranslationUnitContext::loadExternalAST(
           ASTUnit::LoadEverything, Diags, CI.getFileSystemOpts()));
       Unit = LoadedUnit.get();
       FileASTUnitMap[ASTFileName] = std::move(LoadedUnit);
-      SrcFileASTUnitMap[Unit->getOriginalSourceFileName()] = Unit;
+      {
+        ASTUnit *&UnitEntry =
+            SrcFileASTUnitMap[Unit->getOriginalSourceFileName()];
+        assert(!UnitEntry && "Duplicate source file names encountered!");
+        UnitEntry = Unit;
+      }
       ++NumASTLoaded;
       if (DisplayCTUProgress) {
         llvm::errs() << "CTU loaded AST file: "

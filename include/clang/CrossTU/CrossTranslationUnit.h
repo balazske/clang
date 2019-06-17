@@ -176,9 +176,14 @@ private:
   const FunctionDecl *findFunctionInDeclContext(const DeclContext *DC,
                                                 StringRef LookupFnName);
 
+  /// Map from the full name of the AST file to the belonging ASTUnit structure.
   llvm::StringMap<std::unique_ptr<clang::ASTUnit>> FileASTUnitMap;
+  /// Map from a function lookup name (USR) to the ASTUnit for that function.
   llvm::StringMap<clang::ASTUnit *> FunctionASTUnitMap;
+  /// Map from the full source file name to the ASTUnit for that source file.
   llvm::StringMap<clang::ASTUnit *> SrcFileASTUnitMap;
+  /// Map from function lookup name to the AST file name.
+  // This is the content of the "index file".
   llvm::StringMap<std::string> FunctionFileMap;
   llvm::DenseMap<TranslationUnitDecl *, std::unique_ptr<ASTImporter>>
       ASTUnitImporterMap;

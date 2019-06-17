@@ -3102,6 +3102,9 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
         if (!D->doesThisDeclarationHaveABody()) {
           if (FunctionTemplateDecl *DescribedD =
                   D->getDescribedFunctionTemplate()) {
+            // Handle a "templated" function together with its described
+            // template. This avoids need for a similar check at import of the
+            // described template.
             assert(FoundByLookup->getDescribedFunctionTemplate() &&
                    "Templated function mapped to non-templated?");
             Importer.MapImported(DescribedD,

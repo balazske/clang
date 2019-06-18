@@ -17,6 +17,7 @@
 extern void F1(int **);
 extern void F2(int **);
 extern void F3(int **);
+extern void F_H(int **);
 
 void test0() {
   int *X;
@@ -68,3 +69,12 @@ void test4() {
 // CHECK-NEXT: <key>expansion</key><string>F2(&amp;X)</string>
 // CHECK: <key>name</key><string>M</string>
 // CHECK-NEXT: <key>expansion</key><string>*Y = (int *)0</string>
+
+void test_h() {
+  int *X;
+  F_H(&X);
+  *X = 1; // expected-warning{{Dereference of null pointer}}
+}
+
+// CHECK: <key>name</key><string>M_H</string>
+// CHECK-NEXT: <key>expansion</key><string>*A = (int *)0</string>

@@ -843,12 +843,10 @@ static ExpansionInfo
 getExpandedMacro(SourceLocation MacroLoc, const Preprocessor &PP,
                  const cross_tu::CrossTranslationUnitContext &CTU) {
 
-  SourceLocation MacroOriginalLoc;
   const Preprocessor *PPToUse = &PP;
-  if (clang::ASTUnit *Unit =
-          CTU.GetImportedFromSourceLocation(MacroLoc, MacroOriginalLoc)) {
-    PPToUse = &Unit->getPreprocessor();
-    MacroLoc = MacroOriginalLoc;
+  if (auto LocAndUnit = CTU.GetImportedFromSourceLocation(MacroLoc)) {
+    MacroLoc = LocAndUnit->first;
+    PPToUse = &LocAndUnit->second->getPreprocessor();
   }
 
   llvm::SmallString<200> ExpansionBuf;

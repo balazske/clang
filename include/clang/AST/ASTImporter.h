@@ -35,6 +35,7 @@ namespace clang {
 
 class ASTContext;
 class ASTImporterSharedState;
+class ASTUnit;
 class Attr;
 class CXXBaseSpecifier;
 class CXXCtorInitializer;
@@ -132,6 +133,9 @@ class TypeSourceInfo;
     /// The file managers we're importing to and from.
     FileManager &ToFileManager, &FromFileManager;
 
+    /// The ASTUnit that this importer belongs to, if any.
+    ASTUnit *Unit;
+
     /// Whether to perform a minimal import.
     bool Minimal;
 
@@ -166,10 +170,6 @@ class TypeSourceInfo;
     /// manager to the corresponding FileIDs in the "to" source manager.
     llvm::DenseMap<FileID, FileID> ImportedFileIDs;
 
-    /// Mapping from the already-imported FileIDs in the "to" source
-    /// manager to the corresponding FileIDs in the "from" source manager.
-    llvm::DenseMap<FileID, FileID> ImportedFromFileIDs;
-
     /// Mapping from the already-imported CXXBasesSpecifier in
     ///  the "from" source manager to the corresponding CXXBasesSpecifier
     ///  in the "to" source manager.
@@ -187,7 +187,6 @@ class TypeSourceInfo;
     virtual Expected<Decl *> ImportImpl(Decl *From);
 
   public:
-
     /// \param ToContext The context we'll be importing into.
     ///
     /// \param ToFileManager The file manager we'll be importing into.
@@ -200,13 +199,19 @@ class TypeSourceInfo;
     /// as little as it can, e.g., by importing declarations as forward
     /// declarations that can be completed at a later point.
     ///
-    /// \param LookupTable The importer specific lookup table which may be
-    /// shared amongst several ASTImporter objects.
-    /// If not set then the original C/C++ lookup is used.
+    /// \param SharedState The shared importer state which may be
+    /// shared amongst several ASTImporter objects. It is used to importer
+    /// specific lookup of declarations.
+    /// If this is not set then the original C/C++ lookup is used.
+    ///
+    /// \param Unit Pointer to an ASTUnit that contains this importer, if any.
+    /// A mapping of imported FileID's to ASTUnit is stored in the shared state,
+    /// if both are set.
     ASTImporter(ASTContext &ToContext, FileManager &ToFileManager,
                 ASTContext &FromContext, FileManager &FromFileManager,
                 bool MinimalImport,
-                std::shared_ptr<ASTImporterSharedState> SharedState = nullptr);
+                std::shared_ptr<ASTImporterSharedState> SharedState = nullptr,
+                ASTUnit *Unit = nullptr);
 
     virtual ~ASTImporter();
 
@@ -312,10 +317,6 @@ class TypeSourceInfo;
     /// \returns The equivalent source location in the "to" context, or the
     /// import error.
     llvm::Expected<SourceLocation> Import(SourceLocation FromLoc);
-
-    /// Determine the original FileID (in the "from" source manager) for an
-    /// imported FileID (in the "to" source manager).
-    llvm::Optional<FileID> GetFromFileID(FileID ToID) const;
 
     /// Import the given source range from the "from" context into
     /// the "to" context.

@@ -271,7 +271,7 @@ CrossTranslationUnitContext::getCrossTUDefinition(const FunctionDecl *FD,
   TranslationUnitDecl *TU = Unit->getASTContext().getTranslationUnitDecl();
   if (const FunctionDecl *ResultDecl =
           findFunctionInDeclContext(TU, LookupFnName))
-    return importDefinition(ResultDecl);
+    return importDefinition(ResultDecl, Unit);
   return llvm::make_error<IndexError>(index_error_code::failed_import);
 }
 
@@ -349,12 +349,6 @@ llvm::Expected<ASTUnit *> CrossTranslationUnitContext::loadExternalAST(
           ASTUnit::LoadEverything, Diags, CI.getFileSystemOpts()));
       Unit = LoadedUnit.get();
       FileASTUnitMap[ASTFileName] = std::move(LoadedUnit);
-      {
-        ASTUnit *&UnitEntry =
-            SrcFileASTUnitMap[Unit->getOriginalSourceFileName()];
-        assert(!UnitEntry && "Duplicate source file names encountered!");
-        UnitEntry = Unit;
-      }
       ++NumASTLoaded;
       if (DisplayCTUProgress) {
         llvm::errs() << "CTU loaded AST file: "
@@ -374,10 +368,11 @@ llvm::Expected<ASTUnit *> CrossTranslationUnitContext::loadExternalAST(
 }
 
 llvm::Expected<const FunctionDecl *>
-CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD) {
+CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD,
+                                              ASTUnit *Unit) {
   assert(FD->hasBody() && "Functions to be imported should have body.");
 
-  ASTImporter &Importer = getOrCreateASTImporter(FD->getASTContext());
+  ASTImporter &Importer = getOrCreateASTImporter(FD->getASTContext(), Unit);
   auto ToDeclOrError = Importer.Import(FD);
   if (!ToDeclOrError) {
     handleAllErrors(ToDeclOrError.takeError(),
@@ -410,44 +405,38 @@ void CrossTranslationUnitContext::lazyInitImporterSharedSt(
 }
 
 ASTImporter &
-CrossTranslationUnitContext::getOrCreateASTImporter(ASTContext &From) {
+CrossTranslationUnitContext::getOrCreateASTImporter(ASTContext &From,
+                                                    ASTUnit *Unit) {
   auto I = ASTUnitImporterMap.find(From.getTranslationUnitDecl());
   if (I != ASTUnitImporterMap.end())
     return *I->second;
   lazyInitImporterSharedSt(Context.getTranslationUnitDecl());
   ASTImporter *NewImporter = new ASTImporter(
       Context, Context.getSourceManager().getFileManager(), From,
-      From.getSourceManager().getFileManager(), false, ImporterSharedSt);
+      From.getSourceManager().getFileManager(), false, ImporterSharedSt, Unit);
   ASTUnitImporterMap[From.getTranslationUnitDecl()].reset(NewImporter);
   return *NewImporter;
 }
 
-clang::ASTUnit *CrossTranslationUnitContext::GetImportedFromSourceLocation(
-    const clang::SourceLocation &ToLoc, clang::SourceLocation &FromLoc) const {
+llvm::Optional<std::pair<SourceLocation, ASTUnit *>>
+CrossTranslationUnitContext::GetImportedFromSourceLocation(
+    const clang::SourceLocation &ToLoc) const {
+  if (!ImporterSharedSt)
+    return {};
+
   const SourceManager &SM = Context.getSourceManager();
-  auto DecExpToLoc = SM.getDecomposedExpansionLoc(ToLoc);
-  const FileEntry *Entry = SM.getFileEntryForID(DecExpToLoc.first);
-  if (!Entry)
-    return nullptr;
-
-  auto U = SrcFileASTUnitMap.find(Entry->getName());
-  if (U == SrcFileASTUnitMap.end())
-    return nullptr;
-  clang::ASTUnit *Unit = U->second;
-
-  auto I =
-      ASTUnitImporterMap.find(Unit->getASTContext().getTranslationUnitDecl());
-  if (I == ASTUnitImporterMap.end())
-    return nullptr;
-  ASTImporter *Importer = I->second.get();
-
   auto DecToLoc = SM.getDecomposedLoc(ToLoc);
-  llvm::Optional<FileID> FromID = Importer->GetFromFileID(DecToLoc.first);
-  if (!FromID)
-    return nullptr;
-  FromLoc = Unit->getSourceManager().getComposedLoc(*FromID, DecToLoc.second);
 
-  return Unit;
+  auto I = ImporterSharedSt->getImportedFileIDs().find(DecToLoc.first);
+  if (I == ImporterSharedSt->getImportedFileIDs().end())
+    return {};
+
+  FileID FromID = I->second.first;
+  clang::ASTUnit *Unit = I->second.second;
+  SourceLocation FromLoc =
+      Unit->getSourceManager().getComposedLoc(FromID, DecToLoc.second);
+
+  return std::make_pair(FromLoc, Unit);
 }
 
 } // namespace cross_tu

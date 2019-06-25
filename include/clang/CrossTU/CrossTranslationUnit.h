@@ -173,7 +173,7 @@ public:
 
 private:
   void lazyInitImporterSharedSt(TranslationUnitDecl *ToTU);
-  ASTImporter &getOrCreateASTImporter(ASTContext &From, ASTUnit *Unit);
+  ASTImporter &getOrCreateASTImporter(ASTUnit *Unit);
   const FunctionDecl *findFunctionInDeclContext(const DeclContext *DC,
                                                 StringRef LookupFnName);
 

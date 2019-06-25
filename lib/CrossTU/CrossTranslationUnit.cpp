@@ -372,7 +372,9 @@ CrossTranslationUnitContext::importDefinition(const FunctionDecl *FD,
                                               ASTUnit *Unit) {
   assert(FD->hasBody() && "Functions to be imported should have body.");
 
-  ASTImporter &Importer = getOrCreateASTImporter(FD->getASTContext(), Unit);
+  assert(&FD->getASTContext() == &Unit->getASTContext() &&
+         "Wrong ASTContext of function.");
+  ASTImporter &Importer = getOrCreateASTImporter(Unit);
   auto ToDeclOrError = Importer.Import(FD);
   if (!ToDeclOrError) {
     handleAllErrors(ToDeclOrError.takeError(),
@@ -405,11 +407,13 @@ void CrossTranslationUnitContext::lazyInitImporterSharedSt(
 }
 
 ASTImporter &
-CrossTranslationUnitContext::getOrCreateASTImporter(ASTContext &From,
-                                                    ASTUnit *Unit) {
+CrossTranslationUnitContext::getOrCreateASTImporter(ASTUnit *Unit) {
+  ASTContext &From = Unit->getASTContext();
+
   auto I = ASTUnitImporterMap.find(From.getTranslationUnitDecl());
   if (I != ASTUnitImporterMap.end())
     return *I->second;
+
   lazyInitImporterSharedSt(Context.getTranslationUnitDecl());
   ASTImporter *NewImporter = new ASTImporter(
       Context, Context.getSourceManager().getFileManager(), From,

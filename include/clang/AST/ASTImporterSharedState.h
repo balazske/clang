@@ -47,7 +47,12 @@ private:
 
   /// Map of imported FileID's (in "To" context) to FileID in "From" context
   /// and the ASTUnit that contains the preprocessor and source manager for the
-  /// "From" FileID.
+  /// "From" FileID. This map is used to lookup a FileID and its SourceManager
+  /// when knowing only the FileID in the 'To' context. The FileID could be
+  /// imported by any of multiple ASTImporter objects. The map is used because
+  /// we do not want to loop over all ASTImporter's to find the one that
+  /// imported the FileID. (The ASTUnit is usable to get the SourceManager and
+  /// additional data.)
   ImportedFileIDMap ImportedFileIDs;
 
   // FIXME put ImportedFromDecls here!

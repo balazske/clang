@@ -39,7 +39,9 @@ struct Class {
 struct Variable {
   using DeclTy = VarDecl;
   static constexpr auto *Prototype = "extern int X;";
+  static constexpr auto *ConflictingPrototype = "extern float X;";
   static constexpr auto *Definition = "int X;";
+  static constexpr auto *ConflictingDefinition = "float X;";
   BindableMatcher<Decl> getPattern() { return varDecl(hasName("X")); }
 };
 
@@ -60,7 +62,10 @@ struct FunctionTemplate {
 struct ClassTemplate {
   using DeclTy = ClassTemplateDecl;
   static constexpr auto *Prototype = "template <class T> class X;";
+  static constexpr auto *ConflictingPrototype = "template <int I> class X;";
   static constexpr auto *Definition = "template <class T> class X {};";
+  static constexpr auto *ConflictingDefinition =
+      "template <class T> class X { int A; };";
   BindableMatcher<Decl> getPattern() {
     return classTemplateDecl(hasName("X"), unless(isImplicit()));
   }
@@ -69,6 +74,8 @@ struct ClassTemplate {
 struct VariableTemplate {
   using DeclTy = VarTemplateDecl;
   static constexpr auto *Prototype = "template <class T> extern T X;";
+  static constexpr auto *ConflictingPrototype =
+      "template <class T> extern float X;";
   static constexpr auto *Definition =
       R"(
       template <class T> T X;
@@ -110,14 +117,24 @@ struct ClassTemplateSpec {
   using DeclTy = ClassTemplateSpecializationDecl;
   static constexpr auto *Prototype =
       R"(
-    template <class T> class X;
-    template <> class X<int>;
-    )";
+      template <class T> class X;
+      template <> class X<int>;
+      )";
+  static constexpr auto *ConflictingPrototype =
+      R"(
+      template <int I> class X;
+      template <> class X<1>;
+      )";
   static constexpr auto *Definition =
       R"(
-    template <class T> class X;
-    template <> class X<int> {};
-    )";
+      template <class T> class X;
+      template <> class X<int> {};
+      )";
+  static constexpr auto *ConflictingDefinition =
+      R"(
+      template <class T> class X;
+      template <> class X<int> { int A; };
+      )";
   BindableMatcher<Decl> getPattern() {
     return classTemplateSpecializationDecl(hasName("X"), unless(isImplicit()));
   }
@@ -130,12 +147,15 @@ struct RedeclChain : ASTImporterOptionSpecificTestBase {
 
   RedeclChain() { ODRHandling = ODRHandlingParam; }
 
-  std::string getPrototype() { return TypeParam::Prototype; }
-  std::string getDefinition() { return TypeParam::Definition; }
-  std::string getConflictingDefinition() {
+  static std::string getPrototype() { return TypeParam::Prototype; }
+  static std::string getConflictingPrototype() {
+    return TypeParam::ConflictingPrototype;
+  }
+  static std::string getDefinition() { return TypeParam::Definition; }
+  static std::string getConflictingDefinition() {
     return TypeParam::ConflictingDefinition;
   }
-  BindableMatcher<Decl> getPattern() const { return TypeParam().getPattern(); }
+  static BindableMatcher<Decl> getPattern() { return TypeParam().getPattern(); }
 
   void CheckPreviousDecl(Decl *Prev, Decl *Current) {
     ASSERT_NE(Prev, Current);
@@ -414,25 +434,39 @@ struct RedeclChain : ASTImporterOptionSpecificTestBase {
     CheckPreviousDecl(ProtoD, DefinitionD->getPreviousDecl());
   }
 
-  void TypedTest_DoNotImportConflictingDefinition() {
-    Decl *ToTU = getToTuDecl(getDefinition(), Lang_CXX);
-
-    Decl *FromTU = getTuDecl(getConflictingDefinition(), Lang_CXX);
-    auto *FromD = FirstDeclMatcher<DeclTy>().match(FromTU, getPattern());
-
-    auto Result = importOrError(FromD, Lang_CXX);
-    EXPECT_TRUE(isImportError(Result, ImportError::NameConflict));
-    EXPECT_EQ(DeclCounter<DeclTy>().match(ToTU, getPattern()), 1u);
-  }
-
-  void TypedTest_ImportConflictingDefinition() {
-    Decl *ToTU = getToTuDecl(getDefinition(), Lang_CXX);
+  template <std::string (*ToTUContent)(), std::string (*FromTUContent)(),
+            void (*ResultChecker)(llvm::Expected<Decl *> &, Decl *, Decl *)>
+  void TypedTest_ImportAfter() {
+    Decl *ToTU = getToTuDecl(ToTUContent(), Lang_CXX);
     auto *ToD = FirstDeclMatcher<DeclTy>().match(ToTU, getPattern());
 
-    Decl *FromTU = getTuDecl(getConflictingDefinition(), Lang_CXX);
+    Decl *FromTU = getTuDecl(FromTUContent(), Lang_CXX);
     auto *FromD = FirstDeclMatcher<DeclTy>().match(FromTU, getPattern());
 
     auto Result = importOrError(FromD, Lang_CXX);
+
+    ResultChecker(Result, ToTU, ToD);
+  }
+
+  template <std::string (*FromTU1Content)(), std::string (*FromTU2Content)(),
+            void (*ResultChecker)(llvm::Expected<Decl *> &, Decl *, Decl *)>
+  void TypedTest_ImportAfterImported() {
+    Decl *FromTU1 = getTuDecl(FromTU1Content(), Lang_CXX, "input1.cc");
+    auto *FromD1 = FirstDeclMatcher<DeclTy>().match(FromTU1, getPattern());
+    auto Result1 = importOrError(FromD1, Lang_CXX);
+
+    ASSERT_TRUE(isSuccess(Result1));
+    Decl *ImportedD1 = *Result1;
+
+    Decl *FromTU2 = getTuDecl(FromTU2Content(), Lang_CXX, "input2.cc");
+    auto *FromD2 = FirstDeclMatcher<DeclTy>().match(FromTU2, getPattern());
+    auto Result2 = importOrError(FromD2, Lang_CXX);
+
+    ResultChecker(Result2, ImportedD1->getTranslationUnitDecl(), ImportedD1);
+  }
+
+  static void CheckImportedAsNew(llvm::Expected<Decl *> &Result, Decl *ToTU,
+                                 Decl *ToD) {
     ASSERT_TRUE(isSuccess(Result));
     Decl *ImportedD = *Result;
     ASSERT_TRUE(ImportedD);
@@ -441,30 +475,35 @@ struct RedeclChain : ASTImporterOptionSpecificTestBase {
     EXPECT_EQ(DeclCounter<DeclTy>().match(ToTU, getPattern()), 2u);
   }
 
-  void TypedTest_ImportConflictingDefinitionFromTU() {
-    Decl *FromTU1 = getTuDecl(getDefinition(), Lang_CXX, "input1.cc");
-    auto *FromD1 = FirstDeclMatcher<DeclTy>().match(FromTU1, getPattern());
+  static void CheckImportNameConflict(llvm::Expected<Decl *> &Result,
+                                      Decl *ToTU, Decl *ToD) {
+    EXPECT_TRUE(isImportError(Result, ImportError::NameConflict));
+    EXPECT_EQ(DeclCounter<DeclTy>().match(ToTU, getPattern()), 1u);
+  }
 
-    auto Result1 = importOrError(FromD1, Lang_CXX);
-    ASSERT_TRUE(isSuccess(Result1));
-    Decl *ImportedD1 = *Result1;
-
-    Decl *FromTU2 =
-        getTuDecl(getConflictingDefinition(), Lang_CXX, "input2.cc");
-    auto *FromD2 = FirstDeclMatcher<DeclTy>().match(FromTU2, getPattern());
-
-    auto Result2 = importOrError(FromD2, Lang_CXX);
-    ASSERT_TRUE(isSuccess(Result2));
-    Decl *ImportedD2 = *Result2;
-
-    ASSERT_TRUE(ImportedD1);
-    ASSERT_TRUE(ImportedD2);
-    EXPECT_NE(ImportedD1, ImportedD2);
-    EXPECT_FALSE(ImportedD1->getPreviousDecl());
-    EXPECT_FALSE(ImportedD2->getPreviousDecl());
-    EXPECT_EQ(DeclCounter<DeclTy>().match(ImportedD1->getTranslationUnitDecl(),
-                                          getPattern()),
-              2u);
+  void TypedTest_ImportConflictingDefinition() {
+    TypedTest_ImportAfter<getDefinition, getConflictingDefinition,
+                          CheckImportedAsNew>();
+  }
+  void TypedTest_ImportConflictingDefinitionAfterImported() {
+    TypedTest_ImportAfterImported<getDefinition, getConflictingDefinition,
+                                  CheckImportedAsNew>();
+  }
+  void TypedTest_ImportConflictingPrototype() {
+    TypedTest_ImportAfter<getPrototype, getConflictingPrototype,
+                          CheckImportedAsNew>();
+  }
+  void TypedTest_ImportConflictingPrototypeAfterImported() {
+    TypedTest_ImportAfterImported<getPrototype, getConflictingPrototype,
+                                  CheckImportedAsNew>();
+  }
+  void TypedTest_DoNotImportConflictingDefinition() {
+    TypedTest_ImportAfter<getDefinition, getConflictingDefinition,
+                          CheckImportNameConflict>();
+  }
+  void TypedTest_DoNotImportConflictingPrototype() {
+    TypedTest_ImportAfter<getPrototype, getConflictingPrototype,
+                          CheckImportNameConflict>();
   }
 };
 
@@ -669,8 +708,67 @@ ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Class, Conservative, ,
                                             DoNotImportConflictingDefinition)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Class, Liberal, ,
                                             ImportConflictingDefinition)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Class, Liberal, ,
-                                            ImportConflictingDefinitionFromTU)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Class, Liberal, , ImportConflictingDefinitionAfterImported)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Conservative,
+                                            , DoNotImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Liberal, ,
+                                            ImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Liberal, , ImportConflictingPrototypeAfterImported)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Conservative,
+                                            , DoNotImportConflictingDefinition)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Liberal, ,
+                                            ImportConflictingDefinition)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Liberal, , ImportConflictingDefinitionAfterImported)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate,
+                                            Conservative, ,
+                                            DoNotImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
+                                            , ImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingPrototypeAfterImported)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate,
+                                            Conservative, ,
+                                            DoNotImportConflictingDefinition)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
+                                            , ImportConflictingDefinition)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingDefinitionAfterImported)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
+                                            Conservative, ,
+                                            DoNotImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
+                                            Liberal, DISABLED_,
+                                            ImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, DISABLED_,
+    ImportConflictingPrototypeAfterImported)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplateSpec,
+                                            Conservative, ,
+                                            DoNotImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplateSpec,
+                                            Liberal, ,
+                                            ImportConflictingPrototype)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplateSpec, Liberal, ,
+    ImportConflictingPrototypeAfterImported)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplateSpec,
+                                            Conservative, ,
+                                            DoNotImportConflictingDefinition)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplateSpec,
+                                            Liberal, DISABLED_,
+                                            ImportConflictingDefinition)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplateSpec, Liberal, DISABLED_,
+    ImportConflictingDefinitionAfterImported)
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainFunctionConservative,
                         DefaultTestValuesForRunOptions, );
@@ -695,6 +793,14 @@ INSTANTIATE_TEST_CASE_P(ParameterizedTests,
                         DefaultTestValuesForRunOptions, );
 
 INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassLiberal,
+                        DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainVariableLiberal,
+                        DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassTemplateLiberal,
+                        DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainVariableTemplateLiberal,
+                        DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassTemplateSpecLiberal,
                         DefaultTestValuesForRunOptions, );
 
 } // end namespace ast_matchers

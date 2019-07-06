@@ -17,6 +17,16 @@ namespace ast_matchers {
 
 using internal::BindableMatcher;
 
+// DeclTy: Type of the Decl to check.
+// Prototype: "Prototype" (forward declaration) of the Decl.
+// Definition: A definition for the Prototype.
+// ConflictingPrototype: A prototype with the same name but different
+// declaration.
+// ConflictingDefinition: A different definition for Prototype.
+// ConflictingProtoDef: A definition for ConflictingPrototype.
+// getPattern: Return a matcher that matches any of Prototype, Definition,
+// ConflictingPrototype, ConflictingDefinition, ConflictingProtoDef.
+
 struct Function {
   using DeclTy = FunctionDecl;
   static constexpr auto *Prototype = "void X();";
@@ -204,6 +214,10 @@ struct RedeclChain : ASTImporterOptionSpecificTestBase {
     // The rest: Classes, Functions, etc.
     EXPECT_EQ(Current->getPreviousDecl(), Prev);
   }
+
+  // ========================================
+  // Tests when no ODR conflict should occur.
+  // ========================================
 
   void
   TypedTest_PrototypeShouldBeImportedAsAPrototypeWhenThereIsNoDefinition() {
@@ -443,6 +457,10 @@ struct RedeclChain : ASTImporterOptionSpecificTestBase {
     CheckPreviousDecl(ProtoD, DefinitionD->getPreviousDecl());
   }
 
+  // =============================
+  // Tests for ODR conflict cases.
+  // =============================
+
   template <std::string (*ToTUContent)(), std::string (*FromTUContent)(),
             void (*ResultChecker)(llvm::Expected<Decl *> &, Decl *, Decl *)>
   void TypedTest_ImportAfter() {
@@ -556,6 +574,10 @@ struct RedeclChain : ASTImporterOptionSpecificTestBase {
                           CheckImportNameConflict>();
   }
 };
+
+// ==============================
+// Define the parametrized tests.
+// ==============================
 
 #define ASTIMPORTER_INSTANTIATE_TYPED_TEST_CASE(BaseTemplate, TypeParam,       \
                                                 NamePrefix, TestCase)          \
@@ -754,163 +776,203 @@ ASTIMPORTER_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate, ,
 ASTIMPORTER_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, FunctionTemplateSpec, ,
                                         ImportPrototypeThenProtoAndDefinition)
 
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Class, Conservative, ,
-                                            DontImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Class, Liberal, ,
-                                            ImportConflictingDefAfterDef)
+// clang-format off
 
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
-    RedeclChain, Variable, Conservative, , DontImportConflictingProtoAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Conservative,
-                                            , DontImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Conservative,
-                                            ,
-                                            DontImportConflictingProtoAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Conservative,
-                                            ,
-                                            DontImportConflictingDefAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Liberal, ,
-                                            ImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Liberal, ,
-                                            ImportConflictingProtoAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Liberal, ,
-                                            ImportConflictingProtoAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, Variable, Liberal, ,
-                                            ImportConflictingDefAfterProto)
+    RedeclChain, Class, Liberal, ,
+    ImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Liberal, ,
+    ImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplateSpec, Liberal, DISABLED_,
+    ImportConflictingDefAfterDef)
 
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Class, Conservative, ,
+    DontImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Conservative, ,
+    DontImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Conservative, ,
+    DontImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Conservative, DISABLED_,
+    DontImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplateSpec, Conservative, ,
+    DontImportConflictingDefAfterDef)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Liberal, ,
+    ImportConflictingProtoAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingProtoAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingProtoAfterProto)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Conservative, ,
+    DontImportConflictingProtoAfterProto)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
     RedeclChain, ClassTemplate, Conservative, ,
     DontImportConflictingProtoAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate,
-                                            Conservative, ,
-                                            DontImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate,
-                                            Conservative, ,
-                                            DontImportConflictingProtoAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate,
-                                            Conservative, ,
-                                            DontImportConflictingDefAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Conservative, ,
+    DontImportConflictingProtoAfterProto)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Liberal, ,
+    ImportConflictingProtoAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingProtoAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingProtoAfterDef)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Conservative, ,
+    DontImportConflictingProtoAfterDef)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
     RedeclChain, ClassTemplate, Conservative, ,
-    DontImportConflictingProtoAfterProtoDef)
+    DontImportConflictingProtoAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Conservative, ,
+    DontImportConflictingProtoAfterDef)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Liberal, ,
+    ImportConflictingDefAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingDefAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingDefAfterProto)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, Variable, Conservative, ,
+    DontImportConflictingDefAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Conservative, ,
+    DontImportConflictingDefAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Conservative, DISABLED_,
+    DontImportConflictingDefAfterProto)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingProtoDefAfterProto)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingProtoDefAfterProto)
+
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
     RedeclChain, ClassTemplate, Conservative, ,
     DontImportConflictingProtoDefAfterProto)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
-    RedeclChain, ClassTemplate, Conservative, ,
-    DontImportConflictingDefAfterProtoDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
-    RedeclChain, ClassTemplate, Conservative, ,
-    DontImportConflictingProtoDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            , ImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            , ImportConflictingProtoAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            , ImportConflictingProtoAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            , ImportConflictingDefAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            ,
-                                            ImportConflictingProtoAfterProtoDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            ,
-                                            ImportConflictingProtoDefAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            , ImportConflictingDefAfterProtoDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplate, Liberal,
-                                            , ImportConflictingProtoDefAfterDef)
+    RedeclChain, VariableTemplate, Conservative, ,
+    DontImportConflictingProtoDefAfterProto)
 
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
-    RedeclChain, VariableTemplate, Conservative, ,
-    DontImportConflictingProtoAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Conservative, DISABLED_,
-                                            DontImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Conservative, ,
-                                            DontImportConflictingProtoAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Conservative, DISABLED_,
-                                            DontImportConflictingDefAfterProto)
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingProtoAfterProtoDef)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
-    RedeclChain, VariableTemplate, Conservative, ,
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingProtoAfterProtoDef)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Conservative, ,
     DontImportConflictingProtoAfterProtoDef)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
     RedeclChain, VariableTemplate, Conservative, ,
-    DontImportConflictingProtoDefAfterProto)
+    DontImportConflictingProtoAfterProtoDef)
+
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
-    RedeclChain, VariableTemplate, Conservative, DISABLED_,
-    DontImportConflictingDefAfterProtoDef)
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingProtoDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingProtoDefAfterDef)
+
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Conservative, ,
+    DontImportConflictingProtoDefAfterDef)
 ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
     RedeclChain, VariableTemplate, Conservative, DISABLED_,
     DontImportConflictingProtoDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingProtoAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingProtoAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingDefAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingProtoAfterProtoDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingProtoDefAfterProto)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingDefAfterProtoDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, VariableTemplate,
-                                            Liberal, ,
-                                            ImportConflictingProtoDefAfterDef)
 
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplateSpec,
-                                            Conservative, ,
-                                            DontImportConflictingDefAfterDef)
-ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(RedeclChain, ClassTemplateSpec,
-                                            Liberal, DISABLED_,
-                                            ImportConflictingDefAfterDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Liberal, ,
+    ImportConflictingDefAfterProtoDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Liberal, ,
+    ImportConflictingDefAfterProtoDef)
 
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainFunctionConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainVariableConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests,
-                        RedeclChainFunctionTemplateConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests,
-                        RedeclChainClassTemplateConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests,
-                        RedeclChainVariableTemplateConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests,
-                        RedeclChainFunctionTemplateSpecConservative,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests,
-                        RedeclChainClassTemplateSpecConservative,
-                        DefaultTestValuesForRunOptions, );
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, ClassTemplate, Conservative, ,
+    DontImportConflictingDefAfterProtoDef)
+ASTIMPORTER_ODR_INSTANTIATE_TYPED_TEST_CASE(
+    RedeclChain, VariableTemplate, Conservative, DISABLED_,
+    DontImportConflictingDefAfterProtoDef)
 
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassLiberal,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainVariableLiberal,
-                        DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassTemplateLiberal,
-                        DefaultTestValuesForRunOptions, );
+// ======================
+// Instantiate the tests.
+// ======================
+
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainFunctionConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainClassConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainVariableConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainFunctionTemplateConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainClassTemplateConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainVariableTemplateConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainFunctionTemplateSpecConservative,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainClassTemplateSpecConservative,
+    DefaultTestValuesForRunOptions, );
+
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainClassLiberal,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainVariableLiberal,
+    DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainClassTemplateLiberal,
+    DefaultTestValuesForRunOptions, );
 // FIXME: Make these tests all work.
-// INSTANTIATE_TEST_CASE_P(ParameterizedTests,
-//                         RedeclChainVariableTemplateLiberal,
-//                         DefaultTestValuesForRunOptions, );
-INSTANTIATE_TEST_CASE_P(ParameterizedTests, RedeclChainClassTemplateSpecLiberal,
-                        DefaultTestValuesForRunOptions, );
+// INSTANTIATE_TEST_CASE_P(
+//     ParameterizedTests, RedeclChainVariableTemplateLiberal,
+//     DefaultTestValuesForRunOptions, );
+INSTANTIATE_TEST_CASE_P(
+    ParameterizedTests, RedeclChainClassTemplateSpecLiberal,
+    DefaultTestValuesForRunOptions, );
+
+// clang-format on
 
 } // end namespace ast_matchers
 } // end namespace clang

@@ -3001,7 +3001,6 @@ Error ASTNodeImporter::ImportFunctionDeclBody(FunctionDecl *FromFD,
 }
 
 ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
-
   SmallVector<Decl *, 2> Redecls = getCanonicalForwardRedeclChain(D);
   auto RedeclIt = Redecls.begin();
   // Import the first part of the decl chain. I.e. import all previous
@@ -3048,9 +3047,12 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   }
   // Try to find a function in our own ("to") context with the same name, same
   // type, and in the same context as the function we're importing.
-  else if (!LexicalDC->isFunctionOrMethod()) {
+  else {
+    bool IsCImplicit = LexicalDC->isFunctionOrMethod() && D->isImplicit();
+
     SmallVector<NamedDecl *, 4> ConflictingDecls;
-    unsigned IDNS = Decl::IDNS_Ordinary | Decl::IDNS_OrdinaryFriend;
+    unsigned IDNS = Decl::IDNS_Ordinary | Decl::IDNS_OrdinaryFriend |
+                    Decl::IDNS_LocalExtern;
     auto FoundDecls = Importer.findDeclsInToCtx(DC, Name);
     for (auto *FoundDecl : FoundDecls) {
       if (!FoundDecl->isInIdentifierNamespace(IDNS))
@@ -3063,6 +3065,13 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
         if (isStructuralMatch(D, FoundFunction, false)) {
           if (Decl *Def = FindAndMapDefinition(D, FoundFunction))
             return Def;
+
+          if (IsCImplicit &&
+              FoundFunction->getLexicalDeclContext()->isFunctionOrMethod() &&
+              FoundFunction->isImplicit()) {
+            return Importer.MapImported(D, FoundFunction);
+          }
+
           FoundByLookup = FoundFunction;
           break;
         }

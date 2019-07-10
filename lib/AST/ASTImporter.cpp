@@ -3048,7 +3048,17 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   // Try to find a function in our own ("to") context with the same name, same
   // type, and in the same context as the function we're importing.
   else {
-    bool IsCImplicit = LexicalDC->isFunctionOrMethod() && D->isImplicit();
+    // Detect functions that have no prototype before (valid in C only).
+    // These are implicitly contained in a CallExpr without previous
+    // FunctionDecl, in namespace IDNS_LocalExtern. The AST contains the same
+    // FunctionDecl at every CallExpr where that function is called.
+    auto HasNoPrototype = [](FunctionDecl *D) {
+      return D->getLexicalDeclContext()->isFunctionOrMethod() &&
+             D->isImplicit();
+    };
+    bool NoPrototype = HasNoPrototype(D);
+    assert((!NoPrototype || !D->getPreviousDecl()) &&
+           "Function without prototype but with previous decl?");
 
     SmallVector<NamedDecl *, 4> ConflictingDecls;
     unsigned IDNS = Decl::IDNS_Ordinary | Decl::IDNS_OrdinaryFriend |
@@ -3066,9 +3076,10 @@ ExpectedDecl ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
           if (Decl *Def = FindAndMapDefinition(D, FoundFunction))
             return Def;
 
-          if (IsCImplicit &&
-              FoundFunction->getLexicalDeclContext()->isFunctionOrMethod() &&
-              FoundFunction->isImplicit()) {
+          if (NoPrototype && HasNoPrototype(FoundFunction)) {
+            // We want to use the same FoundFunction for every occurrence.
+            // FIXME: In C the same function can be called with different
+            // parameters.
             return Importer.MapImported(D, FoundFunction);
           }
 

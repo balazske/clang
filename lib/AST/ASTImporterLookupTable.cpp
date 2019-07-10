@@ -56,9 +56,11 @@ struct Builder : RecursiveASTVisitor<Builder> {
     return true;
   }
 
-  // Functions without previous declaration are not visited by the AST visitor
+  // Functions without previous prototype are not visited by the AST visitor
   // so they must be added explicitly (like the FriendDecl cases). These are
   // referenced by the expression that calls them so find these.
+  // It is necessary to visit these to find and link them together at AST
+  // import.
   bool VisitCallExpr(CallExpr *E) {
     FunctionDecl *Callee = E->getDirectCallee();
     // Our case: Declaration that is inside a function and implicit.
